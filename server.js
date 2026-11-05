@@ -365,7 +365,7 @@ app.post('/api/register', authLimiter, async (req, res) => {
       }
     });
 
-  } catch (error) {
+   } catch (error) {
 
     console.error('Registration error:', error.message);
 
@@ -388,12 +388,15 @@ app.post('/api/register', authLimiter, async (req, res) => {
       req
     );
 
-    return res.status(500).json({
-      error: 'สมัครร้านไม่สำเร็จ กรุณาตรวจสอบข้อมูล'
+    const emailNotConfigured = error.message === 'EMAIL_NOT_CONFIGURED';
+
+    return res.status(emailNotConfigured ? 503 : 500).json({
+      error: emailNotConfigured
+        ? 'ระบบส่งอีเมลยังตั้งค่าไม่ครบ กรุณาติดต่อผู้ดูแลระบบ'
+        : 'สมัครไม่สำเร็จ กรุณาตรวจสอบข้อมูลและลองใหม่'
     });
   }
 });
-
 // ==========================================
 // 8. VERIFY LICENSE
 // ==========================================

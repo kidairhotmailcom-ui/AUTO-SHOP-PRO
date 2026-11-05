@@ -301,14 +301,15 @@ app.post('/api/register', authLimiter, async (req, res) => {
 
     const { data: authData, error: authError } =
       await admin.auth.admin.createUser({
-        email,
-        password: makeTemporaryPassword(),
-        email_confirm: false,
-        user_metadata: {
-          owner_name: ownerName,
-          app: 'AUTO_SHOP_PRO'
-        }
-      });
+  email,
+  password: makeTemporaryPassword(),
+  email_confirm: false,
+  user_metadata: {
+    owner_name: ownerName,
+    shop_address: address,
+    app: 'AUTO_SHOP_PRO'
+  }
+});
 
     if (authError) throw authError;
 

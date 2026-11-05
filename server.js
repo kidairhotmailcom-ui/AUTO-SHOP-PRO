@@ -243,7 +243,7 @@ app.post('/api/register', authLimiter, async (req, res) => {
   const ownerName = clean(req.body.owner_name, 120);
   const shopName = clean(req.body.shop_name, 160);
 
-  const shopCode = clean(
+  let shopCode = clean(
     req.body.shop_code,
     24
   ).toUpperCase();
@@ -258,7 +258,7 @@ app.post('/api/register', authLimiter, async (req, res) => {
   if (
     !ownerName ||
     !shopName ||
-    !validShopCode(shopCode) ||
+    (shopCode && !validShopCode(shopCode)) ||
     !validEmail(email)
   ) {
     return res.status(400).json({
@@ -266,7 +266,6 @@ app.post('/api/register', authLimiter, async (req, res) => {
       required: [
         'owner_name',
         'shop_name',
-        'shop_code',
         'email'
       ]
     });
@@ -278,6 +277,13 @@ app.post('/api/register', authLimiter, async (req, res) => {
 
   try {
 
+    // สร้าง Shop Code อัตโนมัติ หากไม่ได้ส่งมา
+    if (!shopCode) {
+      shopCode = 'SHP-' +
+        crypto.randomBytes(6).toString('hex').toUpperCase();
+    }
+
+    // ตรวจสอบ Shop Code ซ้ำ
     const { data: existingShop, error: checkError } =
       await admin
         .from('shops')

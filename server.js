@@ -524,10 +524,12 @@ app.post('/api/license/verify', authLimiter, async (req, res) => {
 
     console.error('License verify error:', error.message);
 
-    return res.status(500).json({
-      error: 'ตรวจสอบ License ไม่สำเร็จ'
-    });
-  }
+    return res.status(
+  error.message === 'EMAIL_NOT_CONFIGURED' ? 503 : 500
+).json({
+  error: error.message === 'EMAIL_NOT_CONFIGURED'
+    ? 'ยังไม่ได้ตั้งค่าระบบส่งอีเมลใน Render'
+    : 'สมัครร้านหรือส่ง License ไม่สำเร็จ กรุณาตรวจสอบระบบ'
 });
 
 // ==========================================

@@ -429,7 +429,10 @@ function activate(rootId, name) { document.querySelectorAll('#' + rootId + ' .ta
 let SHOP = null, LIC = null, ORDERS = [], PRODUCTS = [], RIDERS = [], EDIT_ID = null;
 
 async function submitRegistration() {
-  const v = id => $(id).value.trim();
+  const v = id => {
+  const el = $(id);
+  return el ? el.value.trim() : '';
+};
 
   const name = v('reg-name');
   const address = v('reg-address');

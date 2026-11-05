@@ -429,23 +429,93 @@ function activate(rootId, name) { document.querySelectorAll('#' + rootId + ' .ta
 let SHOP = null, LIC = null, ORDERS = [], PRODUCTS = [], RIDERS = [], EDIT_ID = null;
 
 async function submitRegistration() {
-  if (!needDb()) return;
   const v = id => $(id).value.trim();
-  const name = v('reg-name'), address = v('reg-address'), license = v('reg-license').toUpperCase(), email = v('reg-user').toLowerCase(), pass = $('reg-pass').value;
+
+  const name = v('reg-name');
+  const address = v('reg-address');
+  const email = v('reg-user').toLowerCase();
+  const pass = $('reg-pass').value;
+
   if (!name) return note('reg-msg', 'err', '⚠️ กรอกชื่อร้าน');
-  if (!license) return note('reg-msg', 'err', '⚠️ กรอกรหัสใบอนุญาต');
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return note('reg-msg', 'err', '⚠️ กรอกอีเมลให้ถูกต้อง');
-  if (pass.length < 6) return note('reg-msg', 'err', '⚠️ รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร');
-  note('reg-msg', 'ok', '⏳ กำลังสมัคร...');
-  const { data, error } = await db.auth.signUp({ email, password: pass, options: {
-    emailRedirectTo: /^https?:/.test(location.protocol) ? location.origin + location.pathname : undefined,
-    data: { name, address, license_key: license } } });
-  if (error) {
-    const lic = /database error/i.test(error.message || '');
-    return note('reg-msg', 'err', lic ? '❌ สมัครไม่สำเร็จ: ' + ERR.invalid_license : '❌ สมัครไม่สำเร็จ: ' + error.message);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email))
+    return note('reg-msg', 'err', '⚠️ กรอกอีเมลให้ถูกต้อง');
+  if (pass.length < 6)
+    return note('reg-msg', 'err', '⚠️ รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร');
+
+  const shopCode = v('reg-code').toUpperCase();
+  const phone = v('reg-phone');
+
+  if (!shopCode || !phone)
+    return note('reg-msg', 'err', '⚠️ กรอกรหัสร้านและเบอร์โทรศัพท์');
+
+  const API = 'https://auto-shop-pro.onrender.com';
+
+  try {
+    note('reg-msg', 'ok', '⏳ กำลังสมัครร้านและออกใบอนุญาต...');
+
+    // 1. สมัครร้านและขอ License อัตโนมัติ
+    let response = await fetch(API + '/api/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        owner_name: name,
+        shop_name: name,
+        shop_code: shopCode,
+        phone,
+        email,
+        address
+      })
+    });
+
+    let result = await response.json();
+
+    if (!response.ok || !result.ok || !result.license_key)
+      throw new Error(result.error || 'ไม่สามารถสร้างใบอนุญาตได้');
+
+    const license = result.license_key;
+
+    // 2. ยืนยัน License
+    response = await fetch(API + '/api/license/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shop_code: shopCode,
+        license_key: license
+      })
+    });
+
+    result = await response.json();
+
+    if (!response.ok || !result.ok || !result.setup_token)
+      throw new Error(result.error || 'ยืนยันใบอนุญาตไม่สำเร็จ');
+
+    const token = result.setup_token;
+
+    // 3. ตั้งรหัสผ่านเจ้าของร้าน
+    response = await fetch(API + '/api/owner/set-password', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + token
+      },
+      body: JSON.stringify({ password: pass })
+    });
+
+    result = await response.json();
+
+    if (!response.ok || !result.ok)
+      throw new Error(result.error || 'ตั้งรหัสผ่านไม่สำเร็จ');
+
+    // 4. แสดง License ให้เจ้าของร้านเก็บไว้
+    $('reg-license').value = license;
+
+    note('reg-msg', 'ok',
+      '✅ สมัครสำเร็จ! ใบอนุญาตของร้าน: ' + license +
+      ' กรุณาบันทึกใบอนุญาตไว้');
+
+  } catch (error) {
+    note('reg-msg', 'err', '❌ ' + error.message);
   }
-  if (data && data.session) await enterOwner();
-  else note('reg-msg', 'ok', '✅ สมัครสำเร็จ กรุณายืนยันอีเมล แล้วกลับมาเข้าสู่ระบบ');
 }
 async function ownerLogin() {
   if (!needDb()) return;

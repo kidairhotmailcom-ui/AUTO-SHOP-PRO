@@ -242,6 +242,7 @@ app.post('/api/register', authLimiter, async (req, res) => {
 
   const ownerName = clean(req.body.owner_name, 120);
   const shopName = clean(req.body.shop_name, 160);
+  const address = clean(req.body.address, 200);
 
   let shopCode = clean(
     req.body.shop_code,

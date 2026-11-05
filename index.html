@@ -376,13 +376,20 @@ input,select,textarea{border:2px solid #9fb3d9}input:focus,select:focus,textarea
 
 <script>
 // =====================================================
-// ⚙️ ตั้งค่า — ใส่ค่าจาก Supabase Project ใหม่ของ AUTO SHOP PRO เท่านั้น (Project Settings > API)
-// ใช้เฉพาะ anon/publishable key ห้ามใส่ service_role key ในไฟล์นี้
+// AUTO-SHOP-PRO SUPABASE CONFIG
 // =====================================================
-const SUPABASE_URL = "https://YOUR-SHOP-PROJECT.supabase.co";
-const SUPABASE_KEY = "YOUR_SHOP_ANON_OR_PUBLISHABLE_KEY";
-const CONFIGURED = !/YOUR-SHOP-PROJECT|YOUR_SHOP_ANON/.test(SUPABASE_URL + SUPABASE_KEY);
-const db = (window.supabase && CONFIGURED) ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
+const SUPABASE_URL = "https://bhihjcstmamwoinmbfiy.supabase.co";
+
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJoaWhqY3N0bWFtd29pbm1iZml5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI0ODUwMzYsImV4cCI6MjEwODA2MTAzNn0.XZP2d6dJ_Z1QNN5baMYmTH87UEkHEeT8fwecMCO8gAY";
+
+const CONFIGURED =
+  !/YOUR-SHOP-PROJECT|YOUR_SHOP_ANON/.test(
+    SUPABASE_URL + SUPABASE_KEY
+  );
+
+const db = (window.supabase && CONFIGURED)
+  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY)
+  : null;
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));

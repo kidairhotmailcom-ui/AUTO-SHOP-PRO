@@ -156,6 +156,84 @@ function hashIp(ip) {
     .digest('hex');
 }
 
+function escapeHtml(value) {
+  return String(value == null ? '' : value).replace(/[&<>"']/g, char => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  })[char]);
+}
+
+// ==========================================
+// 5.1 SEND LICENSE EMAIL
+// ==========================================
+
+async function sendLicenseEmail({
+  to,
+  ownerName,
+  shopName,
+  shopCode,
+  licenseKey
+}) {
+  const apiKey = process.env.RESEND_API_KEY;
+  const from = process.env.MAIL_FROM;
+
+  if (!apiKey || !from) {
+    throw new Error('EMAIL_NOT_CONFIGURED');
+  }
+
+  const safeOwnerName = escapeHtml(ownerName);
+  const safeShopName = escapeHtml(shopName);
+  const safeShopCode = escapeHtml(shopCode);
+  const safeLicenseKey = escapeHtml(licenseKey);
+
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      from,
+      to: [to],
+      subject: 'License Key สำหรับ AUTO SHOP PRO',
+      html: `
+        <div style="font-family:Arial,sans-serif;line-height:1.7;color:#222">
+          <h2>สมัคร AUTO SHOP PRO สำเร็จ</h2>
+          <p>สวัสดีคุณ ${safeOwnerName}</p>
+          <p>ระบบได้รับข้อมูลสมัครร้านของคุณแล้ว</p>
+          <p><strong>ชื่อร้าน:</strong> ${safeShopName}</p>
+          <p><strong>Shop Code:</strong> ${safeShopCode}</p>
+          <p><strong>License Key:</strong></p>
+          <p style="font-size:20px;font-weight:bold;letter-spacing:1px">
+            ${safeLicenseKey}
+          </p>
+          <p>กรุณาเก็บ License Key นี้ไว้ เพื่อใช้ยืนยันก่อนตั้งรหัสผ่านเจ้าของร้าน</p>
+          <p>หากไม่ได้เป็นผู้สมัคร กรุณาเพิกเฉยต่ออีเมลฉบับนี้</p>
+          <p>AUTO SHOP PRO</p>
+        </div>
+      `,
+      text:
+        `สมัคร AUTO SHOP PRO สำเร็จ\n` +
+        `ชื่อร้าน: ${ownerName}\n` +
+        `Shop Code: ${shopCode}\n` +
+        `License Key: ${licenseKey}\n` +
+        `กรุณาเก็บ License Key นี้ไว้เพื่อใช้ยืนยันก่อนตั้งรหัสผ่าน`
+    })
+  });
+
+  const result = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    console.error('Resend email error:', result);
+    throw new Error('EMAIL_SEND_FAILED');
+  }
+
+  return result;
+}
+
 async function recordAttempt(identifier, type, success, req) {
   const { error } = await admin
     .from('login_attempts')
@@ -278,13 +356,11 @@ app.post('/api/register', authLimiter, async (req, res) => {
 
   try {
 
-    // สร้าง Shop Code อัตโนมัติ หากไม่ได้ส่งมา
     if (!shopCode) {
       shopCode = 'SHP-' +
         crypto.randomBytes(6).toString('hex').toUpperCase();
     }
 
-    // ตรวจสอบ Shop Code ซ้ำ
     const { data: existingShop, error: checkError } =
       await admin
         .from('shops')
@@ -302,15 +378,15 @@ app.post('/api/register', authLimiter, async (req, res) => {
 
     const { data: authData, error: authError } =
       await admin.auth.admin.createUser({
-  email,
-  password: makeTemporaryPassword(),
-  email_confirm: false,
-  user_metadata: {
-    owner_name: ownerName,
-    shop_address: address,
-    app: 'AUTO_SHOP_PRO'
-  }
-});
+        email,
+        password: makeTemporaryPassword(),
+        email_confirm: false,
+        user_metadata: {
+          owner_name: ownerName,
+          shop_address: address,
+          app: 'AUTO_SHOP_PRO'
+        }
+      });
 
     if (authError) throw authError;
 
@@ -355,13 +431,13 @@ app.post('/api/register', authLimiter, async (req, res) => {
 
     shopId = shop.id;
 
-await sendLicenseEmail({
-  to: email,
-  ownerName,
-  shopName,
-  shopCode,
-  licenseKey
-});
+    await sendLicenseEmail({
+      to: email,
+      ownerName,
+      shopName,
+      shopCode,
+      licenseKey
+    });
 
     await recordAttempt(
       shopCode,
@@ -381,7 +457,7 @@ await sendLicenseEmail({
       }
     });
 
-   } catch (error) {
+  } catch (error) {
 
     console.error('Registration error:', error.message);
 
@@ -404,15 +480,24 @@ await sendLicenseEmail({
       req
     );
 
-    const emailNotConfigured = error.message === 'EMAIL_NOT_CONFIGURED';
+    const emailNotConfigured =
+      error.message === 'EMAIL_NOT_CONFIGURED';
 
-    return res.status(emailNotConfigured ? 503 : 500).json({
+    const emailSendFailed =
+      error.message === 'EMAIL_SEND_FAILED';
+
+    return res.status(
+      emailNotConfigured || emailSendFailed ? 503 : 500
+    ).json({
       error: emailNotConfigured
         ? 'ระบบส่งอีเมลยังตั้งค่าไม่ครบ กรุณาติดต่อผู้ดูแลระบบ'
-        : 'สมัครไม่สำเร็จ กรุณาตรวจสอบข้อมูลและลองใหม่'
+        : emailSendFailed
+          ? 'ส่งอีเมล License ไม่สำเร็จ กรุณาตรวจสอบการตั้งค่าอีเมล'
+          : 'สมัครไม่สำเร็จ กรุณาตรวจสอบข้อมูลและลองใหม่'
     });
   }
 });
+
 // ==========================================
 // 8. VERIFY LICENSE
 // ==========================================
@@ -474,6 +559,7 @@ app.post('/api/license/verify', authLimiter, async (req, res) => {
 
     const keyMatches =
       storedKey.length === licenseKey.length &&
+      storedKey.length > 0 &&
       crypto.timingSafeEqual(
         Buffer.from(storedKey),
         Buffer.from(licenseKey)
@@ -524,12 +610,10 @@ app.post('/api/license/verify', authLimiter, async (req, res) => {
 
     console.error('License verify error:', error.message);
 
-    return res.status(
-  error.message === 'EMAIL_NOT_CONFIGURED' ? 503 : 500
-).json({
-  error: error.message === 'EMAIL_NOT_CONFIGURED'
-    ? 'ยังไม่ได้ตั้งค่าระบบส่งอีเมลใน Render'
-    : 'สมัครร้านหรือส่ง License ไม่สำเร็จ กรุณาตรวจสอบระบบ'
+    return res.status(500).json({
+      error: 'ตรวจสอบ License ไม่สำเร็จ กรุณาลองใหม่'
+    });
+  }
 });
 
 // ==========================================
@@ -704,8 +788,10 @@ app.post('/api/owner/login', authLimiter, async (req, res) => {
 
     if (
       authError ||
+      !authData ||
       !authData.user ||
-      authData.user.id !== shop.owner_user_id
+      authData.user.id !== shop.owner_user_id ||
+      !authData.session
     ) {
       await recordAttempt(
         shopCode,

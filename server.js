@@ -1,3 +1,4 @@
+
 'use strict';
 
 require('dotenv').config();
@@ -96,7 +97,6 @@ const authLimiter = rateLimit({
 // 4. SUPABASE CONNECTION
 // ==========================================
 
-// ใช้ Service Role เฉพาะฝั่ง Backend
 const admin = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY,
@@ -108,7 +108,6 @@ const admin = createClient(
   }
 );
 
-// ใช้ Anon Key สำหรับเข้าสู่ระบบผ่าน Supabase Auth
 const publicClient = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_ANON_KEY,
@@ -279,7 +278,6 @@ app.post('/api/register', authLimiter, async (req, res) => {
 
   try {
 
-    // ตรวจ Shop Code ซ้ำ
     const { data: existingShop, error: checkError } =
       await admin
         .from('shops')
@@ -295,7 +293,6 @@ app.post('/api/register', authLimiter, async (req, res) => {
       });
     }
 
-    // สร้าง Supabase Auth User
     const { data: authData, error: authError } =
       await admin.auth.admin.createUser({
         email,
@@ -311,7 +308,6 @@ app.post('/api/register', authLimiter, async (req, res) => {
 
     authUserId = authData.user.id;
 
-    // สร้าง License
     const licenseKey = makeLicenseKey();
 
     const { data: license, error: licenseError } =
@@ -331,7 +327,6 @@ app.post('/api/register', authLimiter, async (req, res) => {
 
     licenseId = license.id;
 
-    // สร้างข้อมูลร้าน
     const { data: shop, error: shopError } =
       await admin
         .from('shops')
@@ -374,7 +369,6 @@ app.post('/api/register', authLimiter, async (req, res) => {
 
     console.error('Registration error:', error.message);
 
-    // ล้างเฉพาะข้อมูลที่เพิ่งสร้างในคำขอนี้
     if (shopId) {
       await admin.from('shops').delete().eq('id', shopId);
     }
@@ -466,7 +460,6 @@ app.post('/api/license/verify', authLimiter, async (req, res) => {
         Buffer.from(licenseKey)
       );
 
-    // อนุญาตเฉพาะ License ที่ยังรอเปิดใช้งาน
     if (
       !license ||
       !keyMatches ||
@@ -558,7 +551,6 @@ app.post(
         });
       }
 
-      // ตั้งรหัสผ่านให้เจ้าของร้าน
       const { error: passwordError } =
         await admin.auth.admin.updateUserById(
           req.setup.sub,
@@ -570,7 +562,6 @@ app.post(
 
       if (passwordError) throw passwordError;
 
-      // เปิดใช้งาน License และร้านผ่าน RPC
       const { data: activated, error: activateError } =
         await admin.rpc('activate_shop_license', {
           p_shop_id: shop.id,
@@ -684,7 +675,6 @@ app.post('/api/owner/login', authLimiter, async (req, res) => {
       });
     }
 
-    // ตรวจรหัสผ่านผ่าน Supabase Auth
     const { data: authData, error: authError } =
       await publicClient.auth.signInWithPassword({
         email: shop.email,

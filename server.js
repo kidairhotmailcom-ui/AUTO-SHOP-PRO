@@ -355,6 +355,14 @@ app.post('/api/register', authLimiter, async (req, res) => {
 
     shopId = shop.id;
 
+await sendLicenseEmail({
+  to: email,
+  ownerName,
+  shopName,
+  shopCode,
+  licenseKey
+});
+
     await recordAttempt(
       shopCode,
       'register',

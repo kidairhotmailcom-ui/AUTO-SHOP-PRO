@@ -648,3 +648,164 @@ app.listen(PORT, () => {
     `AUTO SHOP PRO API running on port ${PORT}`
   );
 });
+app.post('/api/owner/login', authLimiter, async (req, res) => {
+
+  const shopCode = clean(
+    req.body.shop_code,
+    24
+  ).toUpperCase();
+
+  const password =
+    typeof req.body.password === 'string'
+      ? req.body.password
+      : '';
+
+  if (!shopCode || !password) {
+    return res.status(400).json({
+      error: 'กรุณากรอก Shop Code และรหัสผ่าน'
+    });
+  }
+
+  try {
+
+    const { data: shop, error: shopError } =
+      await admin
+        .from('shops')
+        .select(
+          'id, owner_user_id, license_id, shop_code, shop_name, email, is_active'
+        )
+        .eq('shop_code', shopCode)
+        .maybeSingle();
+
+    if (shopError) throw shopError;
+
+    if (
+      !shop ||
+      !shop.email ||
+      !shop.is_active ||
+      !shop.license_id
+    ) {
+      await recordAttempt(
+        shopCode,
+        'owner_login',
+        false,
+        req
+      );
+
+      return res.status(401).json({
+        error: 'Shop Code หรือรหัสผ่านไม่ถูกต้อง'
+      });
+    }
+
+    const { data: license, error: licenseError } =
+      await admin
+        .from('licenses')
+        .select('status, expires_at')
+        .eq('id', shop.license_id)
+        .maybeSingle();
+
+    if (licenseError) throw licenseError;
+
+    if (
+      !license ||
+      license.status !== 'active' ||
+      (
+        license.expires_at &&
+        new Date(license.expires_at).getTime() < Date.now()
+      )
+    ) {
+      await recordAttempt(
+        shopCode,
+        'owner_login',
+        false,
+        req
+      );
+
+      return res.status(403).json({
+        error: 'License หมดอายุหรือถูกระงับ'
+      });
+    }
+
+    const { data: authData, error: authError } =
+      await publicClient.auth.signInWithPassword({
+        email: shop.email,
+        password
+      });
+
+    if (
+      authError ||
+      !authData ||
+      !authData.user ||
+      authData.user.id !== shop.owner_user_id ||
+      !authData.session
+    ) {
+      await recordAttempt(
+        shopCode,
+        'owner_login',
+        false,
+        req
+      );
+
+      return res.status(401).json({
+        error: 'Shop Code หรือรหัสผ่านไม่ถูกต้อง'
+      });
+    }
+
+    await recordAttempt(
+      shopCode,
+      'owner_login',
+      true,
+      req
+    );
+
+    return res.json({
+      ok: true,
+      access_token: authData.session.access_token,
+      refresh_token: authData.session.refresh_token,
+      token_type: authData.session.token_type,
+      expires_in: authData.session.expires_in,
+      shop: {
+        id: shop.id,
+        shop_code: shop.shop_code,
+        shop_name: shop.shop_name
+      }
+    });
+
+  } catch (error) {
+
+    console.error('Owner login error:', error.message);
+
+    return res.status(500).json({
+      error: 'เข้าสู่ระบบไม่สำเร็จ กรุณาลองใหม่'
+    });
+  }
+});
+
+// ==========================================
+// 11. ERROR HANDLER
+// ==========================================
+
+app.use((err, req, res, next) => {
+
+  if (err.message === 'Origin not allowed') {
+    return res.status(403).json({
+      error: 'เว็บไซต์นี้ไม่ได้รับอนุญาตให้เรียก API'
+    });
+  }
+
+  console.error('Server error:', err.message);
+
+  return res.status(500).json({
+    error: 'เกิดข้อผิดพลาดภายในเซิร์ฟเวอร์'
+  });
+});
+
+// ==========================================
+// 12. START SERVER
+// ==========================================
+
+app.listen(PORT, () => {
+  console.log(
+    `AUTO SHOP PRO API running on port ${PORT}`
+  );
+});

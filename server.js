@@ -166,6 +166,7 @@ function escapeHtml(value) {
   })[char]);
 }
 
+
 // ส่ง License Key ไปยังอีเมลเจ้าของร้านผ่าน Gmail SMTP
 // Render ต้องตั้งค่า GMAIL_USER และ GMAIL_APP_PASSWORD
 async function sendLicenseEmail({
@@ -236,15 +237,18 @@ async function sendLicenseEmail({
     });
 
     return result;
-  } catch (err) {
-    console.error('Gmail SMTP email error:', err && err.message ? err.message : err);
-        if (licenseId) {
-      await admin.from('licenses').delete().eq('id', licenseId);
-    }
 
-    if (authUserId) {
-      await admin.auth.admin.deleteUser(authUserId);
-    }
+  } catch (err) {
+    console.error(
+      'Gmail SMTP email error:',
+      err && err.message ? err.message : err
+    );
+
+    const error = new Error('EMAIL_SEND_FAILED');
+    error.code = 'EMAIL_SEND_FAILED';
+    throw error;
+  }
+}
 
     await recordAttempt(
       email || 'unknown',

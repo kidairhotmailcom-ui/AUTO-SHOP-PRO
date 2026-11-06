@@ -704,14 +704,14 @@ try {
 }
 
 const result = EDIT_ID
-? await db.from(‘shop_products’)
-.update(row)
-.eq(‘id’, EDIT_ID)
-: await db.from(‘shop_products’).insert(row);
+  ? await db.from('shop_products')
+      .update(row)
+      .eq('id', EDIT_ID)
+  : await db.from('shop_products').insert(row);
 
 if (result.error) {
-console.error(‘Save product error:’, result.error);
-return alert(’❌ บันทึกไม่สำเร็จ: ’ + result.error.message);
+  console.error('Save product error:', result.error);
+  return alert('❌ บันทึกไม่สำเร็จ: ' + result.error.message);
 }
 
 resetProductForm();

@@ -617,9 +617,9 @@ async function saveProduct() {
 
 let options;
 try {
-options = parseOpts($(‘p-opts’).value);
+  options = parseOpts($('p-opts').value);
 } catch (e) {
-return alert(’⚠️ ’ + e.message);
+  return alert('⚠️ ' + e.message);
 }
 
 const row = {

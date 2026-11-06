@@ -632,14 +632,15 @@ const row = {
   options
 };
 
-const fileInput = $(‘p-img’);
+const fileInput = $('p-img');
 const file = fileInput && fileInput.files
-? fileInput.files[0]
-: null;
+  ? fileInput.files[0]
+  : null;
 
 if (file) {
-if (file.size > 2097152) {
-return alert(‘⚠️ รูปต้องไม่เกิน 2MB’);
+  if (file.size > 2097152) {
+    return alert('⚠️ รูปต้องไม่เกิน 2MB');
+  }
 }
 
 const allowedTypes = {

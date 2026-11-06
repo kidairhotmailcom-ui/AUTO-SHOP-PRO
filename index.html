@@ -605,13 +605,15 @@ function resetProductForm() {
   EDIT_ID = null; ['p-name', 'p-cat', 'p-price', 'p-desc', 'p-opts'].forEach(i => $(i).value = ''); $('p-img').value = ''; $('p-avail').checked = true;
   $('p-title').textContent = 'เพิ่มเมนู/สินค้า'; $('p-cancel').classList.add('hidden');
 }
-async function saveProduct() {
-const name = $(‘p-name’).value.trim();
-const price = Number($(‘p-price’).value);
 
-if (!name || isNaN(price) || price < 0 || $(‘p-price’).value === ‘’) {
-return alert(‘⚠️ กรอกชื่อและราคาให้ถูกต้อง’);
-}
+async function saveProduct() {
+  const name = $('p-name').value.trim();
+  const priceInput = $('p-price').value;
+  const price = Number(priceInput);
+
+  if (!name || priceInput === '' || !Number.isFinite(price) || price < 0) {
+    return alert('⚠️ กรอกชื่อและราคาให้ถูกต้อง');
+  }
 
 let options;
 try {

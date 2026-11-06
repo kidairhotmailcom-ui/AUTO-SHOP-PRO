@@ -606,23 +606,115 @@ function resetProductForm() {
   $('p-title').textContent = 'เพิ่มเมนู/สินค้า'; $('p-cancel').classList.add('hidden');
 }
 async function saveProduct() {
-  const name = $('p-name').value.trim(), price = Number($('p-price').value);
-  if (!name || isNaN(price) || price < 0 || $('p-price').value === '') return alert('⚠️ กรอกชื่อและราคาให้ถูกต้อง');
-  let options; try { options = parseOpts($('p-opts').value); } catch (e) { return alert('⚠️ ' + e.message); }
-  const row = { shop_id: SHOP.id, product_name: name, category: $('p-cat').value.trim() || 'ทั่วไป', price, description: $('p-desc').value.trim() || null, is_available: $('p-avail').checked, options };
-  const file = $('p-img').files[0];
-  if (file) {
-    if (file.size > 2097152) return alert('⚠️ รูปต้องไม่เกิน 2MB');
-    const ext = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }[file.type];
-    if (!ext) return alert('⚠️ รองรับเฉพาะ JPG/PNG/WebP');
-    const path = SHOP.id + '/' + crypto.randomUUID() + '.' + ext;
-    const up = await db.storage.from('shop-images').upload(path, file, { contentType: file.type });
-    if (up.error) return alert('❌ อัปโหลดรูปไม่สำเร็จ: ' + up.error.message);
-    row.image_url = db.storage.from('shop-images').getPublicUrl(path).data.publicUrl;
+const name = $(‘p-name’).value.trim();
+const price = Number($(‘p-price’).value);
+
+if (!name || isNaN(price) || price < 0 || $(‘p-price’).value === ‘’) {
+return alert(‘⚠️ กรอกชื่อและราคาให้ถูกต้อง’);
+}
+
+let options;
+try {
+options = parseOpts($(‘p-opts’).value);
+} catch (e) {
+return alert(’⚠️ ’ + e.message);
+}
+
+const row = {
+shop_id: SHOP.id,
+product_name: name,
+category: $(‘p-cat’).value.trim() || ‘ทั่วไป’,
+price,
+description: $(‘p-desc’).value.trim() || null,
+is_available: $(‘p-avail’).checked,
+options
+};
+
+const fileInput = $(‘p-img’);
+const file = fileInput && fileInput.files
+? fileInput.files[0]
+: null;
+
+if (file) {
+if (file.size > 2097152) {
+return alert(‘⚠️ รูปต้องไม่เกิน 2MB’);
+}
+
+const allowedTypes = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp'
+};
+const ext = allowedTypes[file.type];
+if (!ext) {
+  return alert('⚠️ รองรับเฉพาะ JPG/PNG/WebP');
+}
+if (!SHOP || !SHOP.id) {
+  return alert('❌ ไม่พบข้อมูลร้าน กรุณาเข้าสู่ระบบใหม่');
+}
+if (!db || !db.storage) {
+  return alert('❌ ไม่พบการเชื่อมต่อ Supabase Storage');
+}
+try {
+  const path =
+    String(SHOP.id) + '/' +
+    crypto.randomUUID() + '.' + ext;
+  const bucket = db.storage.from('shop-images');
+  const { data: uploaded, error: uploadError } =
+    await bucket.upload(path, file, {
+      contentType: file.type,
+      cacheControl: '3600',
+      upsert: false
+    });
+  if (uploadError) {
+    console.error('Product image upload error:', {
+      message: uploadError.message,
+      statusCode: uploadError.statusCode,
+      error: uploadError.error
+    });
+    return alert(
+      '❌ อัปโหลดรูปไม่สำเร็จ: ' +
+      uploadError.message +
+      (uploadError.statusCode
+        ? ' (HTTP ' + uploadError.statusCode + ')'
+        : '')
+    );
   }
-  const { error } = EDIT_ID ? await db.from('shop_products').update(row).eq('id', EDIT_ID) : await db.from('shop_products').insert(row);
-  if (error) return alert('❌ บันทึกไม่สำเร็จ: ' + error.message);
-  resetProductForm(); await loadProducts(); renderProducts(); alert('✅ บันทึกเมนูแล้ว');
+  if (!uploaded || !uploaded.path) {
+    return alert('❌ อัปโหลดสำเร็จแต่ไม่พบตำแหน่งไฟล์');
+  }
+  const { data: publicData } =
+    bucket.getPublicUrl(uploaded.path);
+  if (!publicData || !publicData.publicUrl) {
+    return alert('❌ ไม่สามารถสร้าง URL รูปภาพได้');
+  }
+  row.image_url = publicData.publicUrl;
+} catch (uploadException) {
+  console.error('Product image exception:', uploadException);
+  return alert(
+    '❌ เกิดข้อผิดพลาดในการอัปโหลด: ' +
+    (uploadException.message || 'ไม่ทราบสาเหตุ')
+  );
+}
+
+}
+
+const result = EDIT_ID
+? await db.from(‘shop_products’)
+.update(row)
+.eq(‘id’, EDIT_ID)
+: await db.from(‘shop_products’).insert(row);
+
+if (result.error) {
+console.error(‘Save product error:’, result.error);
+return alert(’❌ บันทึกไม่สำเร็จ: ’ + result.error.message);
+}
+
+resetProductForm();
+await loadProducts();
+renderProducts();
+
+alert(‘✅ บันทึกเมนูแล้ว’);
 }
 function renderProducts() {
   $('p-list').innerHTML = PRODUCTS.length ? PRODUCTS.map(p => `

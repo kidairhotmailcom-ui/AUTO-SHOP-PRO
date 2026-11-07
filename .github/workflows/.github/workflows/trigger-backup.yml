@@ -1,1 +1,114 @@
 
+name: Trigger AUTO-SHOP-PRO Backup
+
+on:
+  push:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  trigger-backup:
+    name: Verify and trigger BACKUP
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check backup token
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.BACKUP_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "ERROR: BACKUP_REPO_TOKEN is missing"
+            exit 1
+          fi
+
+          echo "Backup token is present"
+
+      - name: Verify GitHub identity
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.BACKUP_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          HTTP_CODE=$(curl \
+            --silent \
+            --show-error \
+            --output user-check.json \
+            --write-out "%{http_code}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/user)
+
+          echo "GitHub identity HTTP: $HTTP_CODE"
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            cat user-check.json
+            exit 1
+          fi
+
+          python -c "import json; d=json.load(open('user-check.json')); print('Authenticated account:', d.get('login', 'UNKNOWN'))"
+
+      - name: Check BACKUP repository access
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.BACKUP_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          HTTP_CODE=$(curl \
+            --silent \
+            --show-error \
+            --output repo-check.json \
+            --write-out "%{http_code}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/kidairhotmailcom-ui/PETCHNAKA-PROJECT-BACKUP)
+
+          echo "Repository access HTTP: $HTTP_CODE"
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            cat repo-check.json
+            exit 1
+          fi
+
+          echo "BACKUP repository access PASSED"
+
+      - name: Send AUTO-SHOP-PRO backup dispatch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.BACKUP_REPO_TOKEN }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          HTTP_CODE=$(curl \
+            --silent \
+            --show-error \
+            --output dispatch-result.json \
+            --write-out "%{http_code}" \
+            --request POST \
+            --url https://api.github.com/repos/kidairhotmailcom-ui/PETCHNAKA-PROJECT-BACKUP/dispatches \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            --data "{\"event_type\":\"auto-shop-updated\",\"client_payload\":{\"source_sha\":\"$SOURCE_SHA\"}}")
+
+          echo "Dispatch HTTP: $HTTP_CODE"
+
+          if [ "$HTTP_CODE" != "204" ]; then
+            cat dispatch-result.json
+            exit 1
+          fi
+
+          echo "AUTO-SHOP-PRO backup request sent successfully"
+          echo "Source commit: $SOURCE_SHA"

@@ -251,6 +251,106 @@ async function sendLicenseEmail({
 }
 
 // ==========================================
+// แจ้งเตือนเจ้าของระบบเมื่อมีร้านสมัครใหม่
+// ใช้ Gmail SMTP credentials ชุดเดิม
+// ==========================================
+
+async function notifyOwner({
+  ownerName,
+  shopName,
+  shopCode,
+  customerEmail
+}) {
+  const gmailUser = String(process.env.GMAIL_USER || '').trim();
+
+  const appPassword = String(
+    process.env.GMAIL_APP_PASSWORD || ''
+  ).replace(/\s+/g, '');
+
+  // ถ้าไม่มี ALERT_EMAIL จะส่งเข้า Gmail ผู้ส่ง
+  const recipient = String(
+    process.env.ALERT_EMAIL || gmailUser
+  ).trim();
+
+  if (!gmailUser || !appPassword || !recipient) {
+    throw new Error('OWNER_NOTIFICATION_EMAIL_NOT_CONFIGURED');
+  }
+
+  const transporter = nodemailer.createTransport({
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true,
+    auth: {
+      user: gmailUser,
+      pass: appPassword
+    },
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 20000
+  });
+
+  try {
+    const safeOwnerName = escapeHtml(ownerName);
+    const safeShopName = escapeHtml(shopName);
+    const safeShopCode = escapeHtml(shopCode);
+    const safeEmail = escapeHtml(customerEmail);
+
+    const registeredAt = new Date().toLocaleString(
+      'th-TH',
+      { timeZone: 'Asia/Bangkok' }
+    );
+
+    await transporter.sendMail({
+      from: {
+        name: 'AUTO SHOP PRO',
+        address: gmailUser
+      },
+
+      to: recipient,
+
+      subject: 'แจ้งเตือน: มีลูกค้าสมัคร AUTO SHOP PRO ใหม่',
+
+      html: `
+        <div style="font-family:Arial,sans-serif;line-height:1.8;color:#222">
+          <h2>มีลูกค้าสมัคร AUTO SHOP PRO ใหม่</h2>
+
+          <p>มีร้านค้าสมัครเข้ามาในระบบแล้ว</p>
+
+          <p><strong>ชื่อเจ้าของร้าน:</strong> ${safeOwnerName}</p>
+          <p><strong>ชื่อร้าน:</strong> ${safeShopName}</p>
+          <p><strong>Shop Code:</strong> ${safeShopCode}</p>
+          <p><strong>อีเมลลูกค้า:</strong> ${safeEmail}</p>
+          <p><strong>เวลาสมัคร:</strong> ${registeredAt}</p>
+
+          <p>กรุณาเข้าไปตรวจสอบข้อมูลและดำเนินการอนุมัติร้าน</p>
+
+          <p>
+            <a href="https://kidairhotmailcom-ui.github.io/AUTO-SHOP-PRO/">
+              เปิดระบบ AUTO SHOP PRO
+            </a>
+          </p>
+
+          <p>AUTO SHOP PRO</p>
+        </div>
+      `,
+
+      text:
+        'มีลูกค้าสมัคร AUTO SHOP PRO ใหม่\n' +
+        `ชื่อเจ้าของร้าน: ${ownerName}\n` +
+        `ชื่อร้าน: ${shopName}\n` +
+        `Shop Code: ${shopCode}\n` +
+        `อีเมลลูกค้า: ${customerEmail}\n` +
+        `เวลาสมัคร: ${registeredAt}\n` +
+        'กรุณาเข้าไปตรวจสอบและอนุมัติร้าน\n' +
+        'https://kidairhotmailcom-ui.github.io/AUTO-SHOP-PRO/'
+    });
+
+  } finally {
+    transporter.close();
+  }
+}
+
+// ==========================================
 // 6. AUTH ATTEMPT LOG + SETUP TOKEN
 // ==========================================
 

@@ -1,3 +1,4 @@
+
 'use strict';
 
 require('dotenv').config();
@@ -36,15 +37,10 @@ if (process.env.JWT_SECRET.length < 32) {
 }
 
 const PORT = Number(process.env.PORT || 3000);
-const TRIAL_DAYS = Number(process.env.TRIAL_DAYS || 14);
-const TOKEN_MINUTES = Number(
-  process.env.SETUP_TOKEN_MINUTES || 20
-);
+const TOKEN_MINUTES = Number(process.env.SETUP_TOKEN_MINUTES || 20);
 
 const app = express();
-
 app.set('trust proxy', 1);
-
 app.use(helmet());
 app.use(express.json({ limit: '100kb' }));
 
@@ -62,17 +58,16 @@ const mainCors = cors({
     if (!origin || allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
-
     return callback(new Error('Origin not allowed'));
   },
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: [
-    'Content-Type',
-    'Authorization'
-  ]
+  methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 });
 
-const publicCors = cors({ origin: '*', methods: ['GET'] });
+const publicCors = cors({
+  origin: '*',
+  methods: ['GET']
+});
 
 app.use((req, res, next) =>
   req.path.startsWith('/api/public/')
@@ -102,7 +97,7 @@ const authLimiter = rateLimit({
 });
 
 // ==========================================
-// 4. SUPABASE CONNECTION
+// 4. SUPABASE
 // ==========================================
 
 const admin = createClient(
@@ -128,7 +123,7 @@ const publicClient = createClient(
 );
 
 // ==========================================
-// 5. HELPER FUNCTIONS
+// 5. HELPERS
 // ==========================================
 
 function clean(value, max = 160) {
@@ -174,9 +169,39 @@ function escapeHtml(value) {
   })[char]);
 }
 
+function num(v, d) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : d;
+}
 
-// ส่ง License Key ไปยังอีเมลเจ้าของร้านผ่าน Gmail SMTP
-// Render ต้องตั้งค่า GMAIL_USER และ GMAIL_APP_PASSWORD
+// แปลงวันที่เป็น YYYY-MM-DD ตาม UTC
+function dateString(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+// บวกเดือนโดยไม่ใช้จำนวนวันคงที่
+function addMonths(dateStringValue, months) {
+  const [year, month, day] = dateStringValue.split('-').map(Number);
+
+  const targetMonth = month - 1 + months;
+  const targetYear = year + Math.floor(targetMonth / 12);
+  const normalizedMonth = ((targetMonth % 12) + 12) % 12;
+
+  const lastDay = new Date(
+    Date.UTC(targetYear, normalizedMonth + 1, 0)
+  ).getUTCDate();
+
+  const finalDay = Math.min(day, lastDay);
+
+  return dateString(
+    new Date(Date.UTC(targetYear, normalizedMonth, finalDay))
+  );
+}
+
+// ==========================================
+// 6. EMAIL
+// ==========================================
+
 async function sendLicenseEmail({
   to,
   ownerName,
@@ -185,19 +210,15 @@ async function sendLicenseEmail({
   licenseKey
 }) {
   const gmailUser = String(process.env.GMAIL_USER || '').trim();
-  const appPassword = String(process.env.GMAIL_APP_PASSWORD || '')
-    .replace(/\s+/g, '');
+  const appPassword = String(
+    process.env.GMAIL_APP_PASSWORD || ''
+  ).replace(/\s+/g, '');
 
   if (!gmailUser || !appPassword) {
     const error = new Error('EMAIL_NOT_CONFIGURED');
     error.code = 'EMAIL_NOT_CONFIGURED';
     throw error;
   }
-
-  const safeOwnerName = escapeHtml(ownerName);
-  const safeShopName = escapeHtml(shopName);
-  const safeShopCode = escapeHtml(shopCode);
-  const safeLicenseKey = escapeHtml(licenseKey);
 
   const transporter = nodemailer.createTransport({
     host: 'smtp.gmail.com',
@@ -213,7 +234,7 @@ async function sendLicenseEmail({
   });
 
   try {
-    const result = await transporter.sendMail({
+    return await transporter.sendMail({
       from: {
         name: 'AUTO SHOP PRO',
         address: gmailUser
@@ -223,16 +244,14 @@ async function sendLicenseEmail({
       html: `
         <div style="font-family:Arial,sans-serif;line-height:1.7;color:#222">
           <h2>สมัคร AUTO SHOP PRO สำเร็จ</h2>
-          <p>สวัสดีคุณ ${safeOwnerName}</p>
-          <p>ระบบได้รับข้อมูลสมัครร้านของคุณแล้ว</p>
-          <p><strong>ชื่อร้าน:</strong> ${safeShopName}</p>
-          <p><strong>Shop Code:</strong> ${safeShopCode}</p>
+          <p>สวัสดีคุณ ${escapeHtml(ownerName)}</p>
+          <p><strong>ชื่อร้าน:</strong> ${escapeHtml(shopName)}</p>
+          <p><strong>Shop Code:</strong> ${escapeHtml(shopCode)}</p>
           <p><strong>License Key:</strong></p>
-          <p style="font-size:20px;font-weight:bold;letter-spacing:1px">
-            ${safeLicenseKey}
+          <p style="font-size:20px;font-weight:bold">
+            ${escapeHtml(licenseKey)}
           </p>
-          <p>กรุณาเก็บ License Key นี้ไว้ เพื่อใช้ยืนยันก่อนตั้งรหัสผ่านเจ้าของร้าน</p>
-          <p>หากไม่ได้เป็นผู้สมัคร กรุณาเพิกเฉยต่ออีเมลฉบับนี้</p>
+          <p>กรุณาเก็บ License Key นี้ไว้</p>
           <p>AUTO SHOP PRO</p>
         </div>
       `,
@@ -240,28 +259,17 @@ async function sendLicenseEmail({
         `สมัคร AUTO SHOP PRO สำเร็จ\n` +
         `ชื่อร้าน: ${shopName}\n` +
         `Shop Code: ${shopCode}\n` +
-        `License Key: ${licenseKey}\n` +
-        `กรุณาเก็บ License Key นี้ไว้เพื่อใช้ยืนยันก่อนตั้งรหัสผ่าน`
+        `License Key: ${licenseKey}`
     });
-
-    return result;
-
   } catch (err) {
-    console.error(
-      'Gmail SMTP email error:',
-      err && err.message ? err.message : err
-    );
-
+    console.error('Gmail SMTP email error:', err.message);
     const error = new Error('EMAIL_SEND_FAILED');
     error.code = 'EMAIL_SEND_FAILED';
     throw error;
+  } finally {
+    transporter.close();
   }
 }
-
-// ==========================================
-// แจ้งเตือนเจ้าของระบบเมื่อมีร้านสมัครใหม่
-// ใช้ Gmail SMTP credentials ชุดเดิม
-// ==========================================
 
 async function notifyOwnerSmtp({
   ownerName,
@@ -270,12 +278,10 @@ async function notifyOwnerSmtp({
   customerEmail
 }) {
   const gmailUser = String(process.env.GMAIL_USER || '').trim();
-
   const appPassword = String(
     process.env.GMAIL_APP_PASSWORD || ''
   ).replace(/\s+/g, '');
 
-  // ถ้าไม่มี ALERT_EMAIL จะส่งเข้า Gmail ผู้ส่ง
   const recipient = String(
     process.env.ALERT_EMAIL || gmailUser
   ).trim();
@@ -298,11 +304,6 @@ async function notifyOwnerSmtp({
   });
 
   try {
-    const safeOwnerName = escapeHtml(ownerName);
-    const safeShopName = escapeHtml(shopName);
-    const safeShopCode = escapeHtml(shopCode);
-    const safeEmail = escapeHtml(customerEmail);
-
     const registeredAt = new Date().toLocaleString(
       'th-TH',
       { timeZone: 'Asia/Bangkok' }
@@ -313,76 +314,69 @@ async function notifyOwnerSmtp({
         name: 'AUTO SHOP PRO',
         address: gmailUser
       },
-
       to: recipient,
-
       subject: 'แจ้งเตือน: มีลูกค้าสมัคร AUTO SHOP PRO ใหม่',
-
       html: `
         <div style="font-family:Arial,sans-serif;line-height:1.8;color:#222">
           <h2>มีลูกค้าสมัคร AUTO SHOP PRO ใหม่</h2>
-
-          <p>มีร้านค้าสมัครเข้ามาในระบบแล้ว</p>
-
-          <p><strong>ชื่อเจ้าของร้าน:</strong> ${safeOwnerName}</p>
-          <p><strong>ชื่อร้าน:</strong> ${safeShopName}</p>
-          <p><strong>Shop Code:</strong> ${safeShopCode}</p>
-          <p><strong>อีเมลลูกค้า:</strong> ${safeEmail}</p>
+          <p><strong>เจ้าของร้าน:</strong> ${escapeHtml(ownerName)}</p>
+          <p><strong>ร้าน:</strong> ${escapeHtml(shopName)}</p>
+          <p><strong>Shop Code:</strong> ${escapeHtml(shopCode)}</p>
+          <p><strong>อีเมล:</strong> ${escapeHtml(customerEmail)}</p>
           <p><strong>เวลาสมัคร:</strong> ${registeredAt}</p>
-
-          <p>กรุณาเข้าไปตรวจสอบข้อมูลและดำเนินการอนุมัติร้าน</p>
-
           <p>
             <a href="https://kidairhotmailcom-ui.github.io/AUTO-SHOP-PRO/">
-              เปิดระบบ AUTO SHOP PRO
+              เปิด AUTO SHOP PRO
             </a>
           </p>
-
-          <p>AUTO SHOP PRO</p>
         </div>
       `,
-
       text:
         'มีลูกค้าสมัคร AUTO SHOP PRO ใหม่\n' +
-        `ชื่อเจ้าของร้าน: ${ownerName}\n` +
         `ชื่อร้าน: ${shopName}\n` +
+        `ชื่อเจ้าของร้าน: ${ownerName}\n` +
         `Shop Code: ${shopCode}\n` +
         `อีเมลลูกค้า: ${customerEmail}\n` +
         `เวลาสมัคร: ${registeredAt}\n` +
-        'กรุณาเข้าไปตรวจสอบและอนุมัติร้าน\n' +
         'https://kidairhotmailcom-ui.github.io/AUTO-SHOP-PRO/'
     });
-
   } finally {
     transporter.close();
   }
 }
 
 async function notifyOwner(info) {
-  const hook = String(process.env.OWNER_ALERT_WEBHOOK_URL || '').trim();
+  const hook = String(
+    process.env.OWNER_ALERT_WEBHOOK_URL || ''
+  ).trim();
 
   if (!hook) {
     return notifyOwnerSmtp(info);
   }
 
-  const registeredAt = new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' });
+  const registeredAt = new Date().toLocaleString(
+    'th-TH',
+    { timeZone: 'Asia/Bangkok' }
+  );
 
   const response = await fetch(hook, {
     method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    headers: {
+      'Content-Type': 'text/plain;charset=utf-8'
+    },
     redirect: 'follow',
     signal: AbortSignal.timeout(15000),
     body: JSON.stringify({
       secret: process.env.OWNER_ALERT_SECRET || '',
       subject: 'แจ้งเตือน: มีลูกค้าสมัคร AUTO SHOP PRO ใหม่',
       text:
-        'มีลูกค้าสมัคร AUTO SHOP PRO ใหม่ กรุณาเข้าไปตรวจสอบและเปิดระบบ\n\n' +
+        'มีลูกค้าสมัคร AUTO SHOP PRO ใหม่\n\n' +
         'ชื่อร้าน: ' + info.shopName + '\n' +
         'ชื่อเจ้าของร้าน: ' + info.ownerName + '\n' +
         'Shop Code: ' + info.shopCode + '\n' +
         'อีเมลลูกค้า: ' + info.customerEmail + '\n' +
         'เวลาสมัคร: ' + registeredAt + '\n\n' +
-        'เปิดเว็บไซต์เพื่อดำเนินการ: https://kidairhotmailcom-ui.github.io/AUTO-SHOP-PRO/'
+        'https://kidairhotmailcom-ui.github.io/AUTO-SHOP-PRO/'
     })
   });
 
@@ -394,12 +388,9 @@ async function notifyOwner(info) {
 }
 
 // ==========================================
-// 6. AUTH ATTEMPT LOG + SETUP TOKEN
+// 7. AUTH ATTEMPT LOG
 // ==========================================
 
-// บันทึกความพยายามเข้าสู่ระบบ/สมัคร ลงตาราง login_attempts
-// คอลัมน์: login_identifier, attempt_type, success, ip_hash (attempted_at มีค่า default)
-// ล้มเหลวได้โดยไม่ทำให้ API พัง
 async function recordAttempt(identifier, action, success, req) {
   try {
     const { error } = await admin.from('login_attempts').insert({
@@ -410,12 +401,16 @@ async function recordAttempt(identifier, action, success, req) {
     });
 
     if (error) {
-      console.error('recordAttempt error:', error.message, error.details || '');
+      console.error('recordAttempt error:', error.message);
     }
   } catch (err) {
-    console.error('recordAttempt error:', err && err.message ? err.message : err);
+    console.error('recordAttempt error:', err.message);
   }
 }
+
+// ==========================================
+// 8. SETUP TOKEN
+// ==========================================
 
 function createSetupToken(userId, shopId, licenseId) {
   return jwt.sign(
@@ -432,17 +427,23 @@ function createSetupToken(userId, shopId, licenseId) {
 
 function requireSetupToken(req, res, next) {
   const header = req.headers.authorization || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+  const token = header.startsWith('Bearer ')
+    ? header.slice(7)
+    : '';
 
   if (!token) {
-    return res.status(401).json({ error: 'ไม่พบ Setup Token' });
+    return res.status(401).json({
+      error: 'ไม่พบ Setup Token'
+    });
   }
 
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
 
     if (payload.purpose !== 'owner_setup') {
-      return res.status(401).json({ error: 'Setup Token ไม่ถูกต้อง' });
+      return res.status(401).json({
+        error: 'Setup Token ไม่ถูกต้อง'
+      });
     }
 
     req.setup = payload;
@@ -459,23 +460,70 @@ function makeShopCode() {
 }
 
 // ==========================================
-// 7. REGISTER SHOP
+// 9. SYSTEM ADMIN AUTHENTICATION
 // ==========================================
 
-// สมัครร้าน: ระบบสร้างบัญชี ร้าน และ License ให้เอง แล้วรอเจ้าของระบบอนุมัติใน Supabase
-// - License สถานะ suspended + ร้าน is_active=false จนกว่าจะอนุมัติ (ดู admin_shops.sql)
-// - ไม่ส่งอีเมล และไม่ส่ง License กลับใน response
-app.post('/api/register', authLimiter, async (req, res) => {
+function requireSystemAdmin(req, res, next) {
+  const configuredKey = String(
+    process.env.ADMIN_API_KEY || ''
+  );
 
-  if (process.env.SIGNUPS_OPEN === 'false') {
-    return res.status(403).json({ error: 'ขณะนี้ปิดรับสมัครชั่วคราว กรุณาติดต่อทีมงาน' });
+  if (configuredKey.length < 32) {
+    return res.status(503).json({
+      error: 'ระบบหลังบ้านยังไม่ได้ตั้งค่า ADMIN_API_KEY'
+    });
   }
 
-  const shopName = clean(req.body.shop_name || req.body.owner_name, 120);
-  const ownerName = clean(req.body.owner_name || req.body.shop_name, 120);
+  const header = req.headers.authorization || '';
+  const suppliedKey = header.startsWith('Bearer ')
+    ? header.slice(7)
+    : '';
+
+  if (!suppliedKey) {
+    return res.status(401).json({
+      error: 'ไม่มีสิทธิ์เข้าถึงระบบหลังบ้าน'
+    });
+  }
+
+  const expected = Buffer.from(configuredKey);
+  const received = Buffer.from(suppliedKey);
+
+  if (
+    expected.length !== received.length ||
+    !crypto.timingSafeEqual(expected, received)
+  ) {
+    return res.status(403).json({
+      error: 'รหัสผู้ดูแลระบบไม่ถูกต้อง'
+    });
+  }
+
+  return next();
+}
+
+// ==========================================
+// 10. REGISTER SHOP
+// ==========================================
+
+app.post('/api/register', authLimiter, async (req, res) => {
+  if (process.env.SIGNUPS_OPEN === 'false') {
+    return res.status(403).json({
+      error: 'ขณะนี้ปิดรับสมัครชั่วคราว กรุณาติดต่อทีมงาน'
+    });
+  }
+
+  const shopName = clean(
+    req.body.shop_name || req.body.owner_name, 120
+  );
+
+  const ownerName = clean(
+    req.body.owner_name || req.body.shop_name, 120
+  );
+
   const address = clean(req.body.address, 300);
   const email = clean(req.body.email, 160).toLowerCase();
-  const password = typeof req.body.password === 'string' ? req.body.password : '';
+  const password = typeof req.body.password === 'string'
+    ? req.body.password
+    : '';
 
   if (!shopName || !validEmail(email)) {
     return res.status(400).json({
@@ -494,10 +542,8 @@ app.post('/api/register', authLimiter, async (req, res) => {
   let createdShopId = null;
 
   try {
-
     const { data: existing, error: existingError } =
-      await admin
-        .from('shops')
+      await admin.from('shops')
         .select('id')
         .eq('email', email)
         .maybeSingle();
@@ -505,7 +551,9 @@ app.post('/api/register', authLimiter, async (req, res) => {
     if (existingError) throw existingError;
 
     if (existing) {
-      return res.status(409).json({ error: 'อีเมลนี้สมัครร้านแล้ว' });
+      return res.status(409).json({
+        error: 'อีเมลนี้สมัครร้านแล้ว'
+      });
     }
 
     const { data: userData, error: userError } =
@@ -519,8 +567,7 @@ app.post('/api/register', authLimiter, async (req, res) => {
     createdUserId = userData.user.id;
 
     const { data: license, error: licenseError } =
-      await admin
-        .from('licenses')
+      await admin.from('licenses')
         .insert({
           license_key: makeLicenseKey(),
           status: 'suspended',
@@ -533,8 +580,7 @@ app.post('/api/register', authLimiter, async (req, res) => {
     createdLicenseId = license.id;
 
     const { data: shop, error: shopError } =
-      await admin
-        .from('shops')
+      await admin.from('shops')
         .insert({
           owner_user_id: createdUserId,
           license_id: createdLicenseId,
@@ -551,21 +597,15 @@ app.post('/api/register', authLimiter, async (req, res) => {
     if (shopError) throw shopError;
     createdShopId = shop.id;
 
-    
     await recordAttempt(email, 'register', true, req);
 
-    // แจ้งเจ้าของระบบทาง Gmail
-    // หากส่งไม่สำเร็จ จะไม่กระทบการสมัครร้าน
     notifyOwner({
       ownerName,
       shopName,
       shopCode: shop.shop_code,
       customerEmail: email
     }).catch(error => {
-      console.error(
-        'Owner notification failed:',
-        error && error.message ? error.message : error
-      );
+      console.error('Owner notification failed:', error.message);
     });
 
     return res.status(201).json({
@@ -579,21 +619,25 @@ app.post('/api/register', authLimiter, async (req, res) => {
     });
 
   } catch (error) {
+    console.error('Register error:', {
+      message: error.message,
+      code: error.code,
+      details: error.details,
+      hint: error.hint
+    });
 
-
-    console.error('Register error:', JSON.stringify({
-      step: createdShopId ? 'done' : createdLicenseId ? 'insert_shop' : createdUserId ? 'insert_license' : 'lookup_or_create_user',
-      message: error && error.message,
-      code: error && error.code,
-      details: error && error.details,
-      hint: error && error.hint
-    }));
-
-    // ย้อนกลับเฉพาะสิ่งที่สร้างในรอบนี้ ไม่แตะข้อมูลเดิม
     try {
-      if (createdShopId) await admin.from('shops').delete().eq('id', createdShopId);
-      if (createdLicenseId) await admin.from('licenses').delete().eq('id', createdLicenseId);
-      if (createdUserId) await admin.auth.admin.deleteUser(createdUserId);
+      if (createdShopId) {
+        await admin.from('shops').delete().eq('id', createdShopId);
+      }
+
+      if (createdLicenseId) {
+        await admin.from('licenses').delete().eq('id', createdLicenseId);
+      }
+
+      if (createdUserId) {
+        await admin.auth.admin.deleteUser(createdUserId);
+      }
     } catch (rollbackErr) {
       console.error('Register rollback error:', rollbackErr.message);
     }
@@ -606,7 +650,9 @@ app.post('/api/register', authLimiter, async (req, res) => {
       error.code === 'user_already_exists' ||
       /already (been )?registered|already exists|duplicate/i.test(error.message || '')
     ) {
-      return res.status(409).json({ error: 'อีเมลนี้สมัครร้านแล้ว' });
+      return res.status(409).json({
+        error: 'อีเมลนี้สมัครร้านแล้ว'
+      });
     }
 
     return res.status(500).json({
@@ -616,7 +662,7 @@ app.post('/api/register', authLimiter, async (req, res) => {
 });
 
 // ==========================================
-// 7.2 PUBLIC STATS (ยอดผู้สมัครจริงสำหรับ Project Hub: ตัวเลขรวมเท่านั้น ไม่มีชื่อ/เบอร์/อีเมล)
+// 11. PUBLIC SIGNUP STATS
 // ==========================================
 
 const publicLimiter = rateLimit({
@@ -624,10 +670,15 @@ const publicLimiter = rateLimit({
   limit: 30,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
-  message: { error: 'เรียกข้อมูลถี่เกินไป กรุณารอสักครู่' }
+  message: {
+    error: 'เรียกข้อมูลถี่เกินไป กรุณารอสักครู่'
+  }
 });
 
-let statsCache = { at: 0, body: null };
+let statsCache = {
+  at: 0,
+  body: null
+};
 
 app.get('/api/public/signup-stats', publicLimiter, async (req, res) => {
   try {
@@ -635,7 +686,6 @@ app.get('/api/public/signup-stats', publicLimiter, async (req, res) => {
       return res.json(statsCache.body);
     }
 
-    // ไม่นับร้านทดสอบ (is_test = true) นับ 1 แถวต่อ 1 ร้าน (อีเมลซ้ำสมัครไม่ได้)
     const { data, error } = await admin
       .from('shops')
       .select('is_active, opening_started_at, created_at, licenses(starts_at)')
@@ -644,23 +694,30 @@ app.get('/api/public/signup-stats', publicLimiter, async (req, res) => {
 
     if (error) throw error;
 
-    const bangkokDay = (d) =>
-      new Date(d.getTime() + 7 * 3600 * 1000).toISOString().slice(0, 10);
+    const bangkokDay = d =>
+      new Date(d.getTime() + 7 * 3600 * 1000)
+        .toISOString().slice(0, 10);
 
     const perDay = {};
-    let total = 0, pending = 0, inProgress = 0, activated = 0;
+    let total = 0;
+    let pending = 0;
+    let inProgress = 0;
+    let activated = 0;
 
     for (const shop of data) {
-      total += 1;
+      total++;
 
-      const lic = Array.isArray(shop.licenses) ? shop.licenses[0] : shop.licenses;
+      const lic = Array.isArray(shop.licenses)
+        ? shop.licenses[0]
+        : shop.licenses;
+
       const everApproved = Boolean(lic && lic.starts_at);
 
       if (shop.is_active) {
-        activated += 1;
+        activated++;
       } else if (!everApproved) {
-        if (shop.opening_started_at) inProgress += 1;
-        else pending += 1;
+        if (shop.opening_started_at) inProgress++;
+        else pending++;
       }
 
       const key = bangkokDay(new Date(shop.created_at));
@@ -668,9 +725,16 @@ app.get('/api/public/signup-stats', publicLimiter, async (req, res) => {
     }
 
     const series = [];
+
     for (let i = 13; i >= 0; i--) {
-      const key = bangkokDay(new Date(Date.now() - i * 86400000));
-      series.push({ date: key, count: perDay[key] || 0 });
+      const key = bangkokDay(
+        new Date(Date.now() - i * 86400000)
+      );
+
+      series.push({
+        date: key,
+        count: perDay[key] || 0
+      });
     }
 
     const body = {
@@ -683,18 +747,24 @@ app.get('/api/public/signup-stats', publicLimiter, async (req, res) => {
       updated_at: new Date().toISOString()
     };
 
-    statsCache = { at: Date.now(), body };
+    statsCache = {
+      at: Date.now(),
+      body
+    };
 
     return res.json(body);
 
   } catch (error) {
-    console.error('Public stats error:', error && error.message ? error.message : error);
-    return res.status(503).json({ error: 'ยังไม่สามารถโหลดข้อมูลได้' });
+    console.error('Public stats error:', error.message);
+
+    return res.status(503).json({
+      error: 'ยังไม่สามารถโหลดข้อมูลได้'
+    });
   }
 });
 
 // ==========================================
-// 7.5 DELIVERY QUOTE (เส้นทางถนนจริงจาก openrouteservice, ใช้ฟรีด้วย ORS_API_KEY)
+// 12. DELIVERY QUOTE
 // ==========================================
 
 const quoteLimiter = rateLimit({
@@ -702,80 +772,111 @@ const quoteLimiter = rateLimit({
   max: 20,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'เรียกคำนวณเส้นทางถี่เกินไป กรุณารอสักครู่' }
+  message: {
+    error: 'เรียกคำนวณเส้นทางถี่เกินไป กรุณารอสักครู่'
+  }
 });
 
-function num(v, d) {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : d;
-}
-
-// ตรวจสถานะบริการคำนวณค่าจัดส่ง (ไม่เปิดเผยความลับ ใช้ไล่หาสาเหตุเท่านั้น)
 app.get('/api/delivery/status', quoteLimiter, async (req, res) => {
   try {
-    const { error } = await admin.from('delivery_quotes').select('id').limit(1);
+    const { error } = await admin
+      .from('delivery_quotes')
+      .select('id')
+      .limit(1);
+
     return res.json({
       route_service_key_set: Boolean(process.env.ORS_API_KEY),
       quotes_table_ok: !error,
       quotes_table_error_code: error ? error.code || null : null
     });
   } catch (err) {
-    return res.status(500).json({ error: 'status check failed' });
+    return res.status(500).json({
+      error: 'status check failed'
+    });
   }
 });
 
 app.post('/api/delivery/quote', quoteLimiter, async (req, res) => {
-
   const code = clean(req.body.shop_code, 40).toUpperCase();
   const lat = Number(req.body.lat);
   const lng = Number(req.body.lng);
 
   if (
     !/^[A-Z0-9]{4,40}$/.test(code) ||
-    !Number.isFinite(lat) || !Number.isFinite(lng) ||
-    Math.abs(lat) > 90 || Math.abs(lng) > 180
+    !Number.isFinite(lat) ||
+    !Number.isFinite(lng) ||
+    Math.abs(lat) > 90 ||
+    Math.abs(lng) > 180
   ) {
-    return res.status(400).json({ error: 'ข้อมูลตำแหน่งไม่ถูกต้อง' });
+    return res.status(400).json({
+      error: 'ข้อมูลตำแหน่งไม่ถูกต้อง'
+    });
   }
 
   if (!process.env.ORS_API_KEY) {
-    return res.status(503).json({ error: 'ระบบคำนวณเส้นทางยังไม่ได้ตั้งค่า กรุณาติดต่อผู้ดูแลระบบ' });
+    return res.status(503).json({
+      error: 'ระบบคำนวณเส้นทางยังไม่ได้ตั้งค่า กรุณาติดต่อผู้ดูแลระบบ'
+    });
   }
 
   try {
-
     const { data: shop, error: shopError } =
-      await admin.from('shops').select('id, is_active').eq('shop_code', code).maybeSingle();
+      await admin.from('shops')
+        .select('id, is_active')
+        .eq('shop_code', code)
+        .maybeSingle();
 
     if (shopError) throw shopError;
 
     if (!shop || !shop.is_active) {
-      return res.status(404).json({ error: 'ไม่พบร้านค้า' });
+      return res.status(404).json({
+        error: 'ไม่พบร้านค้า'
+      });
     }
 
     const { data: row, error: cfgError } =
-      await admin.from('shop_settings').select('settings').eq('shop_id', shop.id).maybeSingle();
+      await admin.from('shop_settings')
+        .select('settings')
+        .eq('shop_id', shop.id)
+        .maybeSingle();
 
     if (cfgError) throw cfgError;
 
     const cfg = row && row.settings && row.settings.delivery;
 
-    if (!cfg || !Number.isFinite(Number(cfg.lat)) || !Number.isFinite(Number(cfg.lng))) {
-      return res.status(409).json({ error: 'ร้านยังไม่ได้ตั้งตำแหน่งร้าน' });
+    if (
+      !cfg ||
+      !Number.isFinite(Number(cfg.lat)) ||
+      !Number.isFinite(Number(cfg.lng))
+    ) {
+      return res.status(409).json({
+        error: 'ร้านยังไม่ได้ตั้งตำแหน่งร้าน'
+      });
     }
 
-    // จุดส่งอยู่ที่เดียวกับร้าน (ห่างน้อยกว่า 50 เมตร): ไม่ต้องเรียกบริการเส้นทาง คิดระยะ 0 กม. ใช้ค่าจัดส่งขั้นต่ำ
-    const toRad = (d) => d * Math.PI / 180;
-    const dLat = toRad(lat - Number(cfg.lat)), dLng = toRad(lng - Number(cfg.lng));
-    const hav = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(Number(cfg.lat))) * Math.cos(toRad(lat)) * Math.sin(dLng / 2) ** 2;
+    const toRad = d => d * Math.PI / 180;
+    const dLat = toRad(lat - Number(cfg.lat));
+    const dLng = toRad(lng - Number(cfg.lng));
+
+    const hav =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(toRad(Number(cfg.lat))) *
+      Math.cos(toRad(lat)) *
+      Math.sin(dLng / 2) ** 2;
+
     const straightKm = 12742 * Math.asin(Math.sqrt(hav));
 
-    let km, minutes, coords;
+    let km;
+    let minutes;
+    let coords;
 
     if (straightKm < 0.05) {
       km = 0;
       minutes = 1;
-      coords = [[Number(cfg.lng), Number(cfg.lat)], [lng, lat]];
+      coords = [
+        [Number(cfg.lng), Number(cfg.lat)],
+        [lng, lat]
+      ];
     } else {
       const orsResponse = await fetch(
         'https://api.openrouteservice.org/v2/directions/driving-car/geojson',
@@ -786,33 +887,46 @@ app.post('/api/delivery/quote', quoteLimiter, async (req, res) => {
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            coordinates: [[Number(cfg.lng), Number(cfg.lat)], [lng, lat]]
+            coordinates: [
+              [Number(cfg.lng), Number(cfg.lat)],
+              [lng, lat]
+            ]
           }),
           signal: AbortSignal.timeout(10000)
         }
       );
 
       if (orsResponse.status === 404 || orsResponse.status === 400) {
-        return res.status(422).json({ error: 'ไม่พบเส้นทางไปยังตำแหน่งนี้ ลองขยับหมุดใกล้ถนน' });
+        return res.status(422).json({
+          error: 'ไม่พบเส้นทางไปยังตำแหน่งนี้ ลองขยับหมุดใกล้ถนน'
+        });
       }
 
       if (!orsResponse.ok) {
         console.error('ORS error status:', orsResponse.status);
-        return res.status(502).json({ error: 'บริการเส้นทางไม่พร้อมใช้งาน กรุณาลองใหม่' });
+
+        return res.status(502).json({
+          error: 'บริการเส้นทางไม่พร้อมใช้งาน กรุณาลองใหม่'
+        });
       }
 
       const geo = await orsResponse.json();
       const feature = geo.features && geo.features[0];
-      const summary = feature && feature.properties && feature.properties.summary;
+      const summary = feature &&
+        feature.properties &&
+        feature.properties.summary;
 
       if (!summary) {
-        return res.status(502).json({ error: 'บริการเส้นทางตอบกลับไม่ถูกต้อง' });
+        return res.status(502).json({
+          error: 'บริการเส้นทางตอบกลับไม่ถูกต้อง'
+        });
       }
 
       km = summary.distance / 1000;
       minutes = Math.max(1, Math.round(summary.duration / 60));
       coords = feature.geometry.coordinates;
     }
+
     const maxKm = num(cfg.max_km, 0);
 
     if (maxKm > 0 && km > maxKm) {
@@ -822,36 +936,52 @@ app.post('/api/delivery/quote', quoteLimiter, async (req, res) => {
     }
 
     const kml = Math.max(num(cfg.km_per_l, 30), 1);
-    const fuel = (km * (cfg.round_trip ? 2 : 1)) / kml * Math.max(num(cfg.fuel_price, 0), 0);
+    const fuel =
+      (km * (cfg.round_trip ? 2 : 1)) /
+      kml * Math.max(num(cfg.fuel_price, 0), 0);
+
     const labor = Math.max(num(cfg.labor, 0), 0);
     const maintenance = Math.max(num(cfg.maintenance, 0), 0);
     const cost = fuel + labor + maintenance;
-    const fee = Math.max(num(cfg.min_fee, 0), Math.ceil(Math.max(num(cfg.per_km, 0), 0) * km));
-    const r2 = (x) => Math.round(x * 100) / 100;
+
+    const fee = Math.max(
+      num(cfg.min_fee, 0),
+      Math.ceil(Math.max(num(cfg.per_km, 0), 0) * km)
+    );
+
+    const r2 = x => Math.round(x * 100) / 100;
 
     const { data: quote, error: quoteError } =
-      await admin.from('delivery_quotes').insert({
-        shop_id: shop.id,
-        lat,
-        lng,
-        distance_km: r2(km),
-        duration_min: minutes,
-        fee,
-        cost: r2(cost),
-        breakdown: {
-          fuel: r2(fuel), labor, maintenance, cost: r2(cost),
-          customer_fee: fee, profit: r2(fee - cost),
-          round_trip: Boolean(cfg.round_trip)
-        }
-      }).select('id').single();
+      await admin.from('delivery_quotes')
+        .insert({
+          shop_id: shop.id,
+          lat,
+          lng,
+          distance_km: r2(km),
+          duration_min: minutes,
+          fee,
+          cost: r2(cost),
+          breakdown: {
+            fuel: r2(fuel),
+            labor,
+            maintenance,
+            cost: r2(cost),
+            customer_fee: fee,
+            profit: r2(fee - cost),
+            round_trip: Boolean(cfg.round_trip)
+          }
+        })
+        .select('id')
+        .single();
 
     if (quoteError) throw quoteError;
 
     const step = Math.max(1, Math.ceil(coords.length / 250));
-    const route = coords.filter((_, i) => i % step === 0 || i === coords.length - 1)
+
+    const route = coords
+      .filter((_, i) => i % step === 0 || i === coords.length - 1)
       .map(([x, y]) => [y, x]);
 
-    // ลูกค้าเห็นเฉพาะระยะทาง เวลา และค่าจัดส่ง (ต้นทุนและกำไรเก็บใน delivery_quotes สำหรับร้านเท่านั้น)
     return res.json({
       ok: true,
       quote_id: quote.id,
@@ -862,25 +992,25 @@ app.post('/api/delivery/quote', quoteLimiter, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Quote error:', error && error.message ? error.message : error);
-    return res.status(500).json({ error: 'คำนวณค่าจัดส่งไม่สำเร็จ กรุณาลองใหม่' });
+    console.error('Quote error:', error.message);
+
+    return res.status(500).json({
+      error: 'คำนวณค่าจัดส่งไม่สำเร็จ กรุณาลองใหม่'
+    });
   }
 });
 
 // ==========================================
-// 8. VERIFY LICENSE
+// 13. VERIFY LICENSE
 // ==========================================
 
 app.post('/api/license/verify', authLimiter, async (req, res) => {
-
   const licenseKey = clean(
-    req.body.license_key,
-    100
+    req.body.license_key, 100
   ).toUpperCase();
 
   const shopCode = clean(
-    req.body.shop_code,
-    24
+    req.body.shop_code, 24
   ).toUpperCase();
 
   if (!licenseKey || !shopCode) {
@@ -890,10 +1020,8 @@ app.post('/api/license/verify', authLimiter, async (req, res) => {
   }
 
   try {
-
     const { data: license, error: licenseError } =
-      await admin
-        .from('licenses')
+      await admin.from('licenses')
         .select('id, license_key, status, plan, starts_at, expires_at')
         .eq('license_key', licenseKey)
         .maybeSingle();
@@ -901,12 +1029,7 @@ app.post('/api/license/verify', authLimiter, async (req, res) => {
     if (licenseError) throw licenseError;
 
     if (!license) {
-      await recordAttempt(
-        shopCode,
-        'license_verify',
-        false,
-        req
-      );
+      await recordAttempt(shopCode, 'license_verify', false, req);
 
       return res.status(401).json({
         error: 'License ไม่ถูกต้อง'
@@ -914,8 +1037,7 @@ app.post('/api/license/verify', authLimiter, async (req, res) => {
     }
 
     const { data: shop, error: shopError } =
-      await admin
-        .from('shops')
+      await admin.from('shops')
         .select('id, owner_user_id, shop_code, shop_name, license_id, is_active')
         .eq('shop_code', shopCode)
         .eq('license_id', license.id)
@@ -924,12 +1046,7 @@ app.post('/api/license/verify', authLimiter, async (req, res) => {
     if (shopError) throw shopError;
 
     if (!shop) {
-      await recordAttempt(
-        shopCode,
-        'license_verify',
-        false,
-        req
-      );
+      await recordAttempt(shopCode, 'license_verify', false, req);
 
       return res.status(401).json({
         error: 'License ไม่ตรงกับ Shop Code'
@@ -954,12 +1071,7 @@ app.post('/api/license/verify', authLimiter, async (req, res) => {
       license.id
     );
 
-    await recordAttempt(
-      shopCode,
-      'license_verify',
-      true,
-      req
-    );
+    await recordAttempt(shopCode, 'license_verify', true, req);
 
     return res.json({
       ok: true,
@@ -973,7 +1085,6 @@ app.post('/api/license/verify', authLimiter, async (req, res) => {
     });
 
   } catch (error) {
-
     console.error('License verify error:', error.message);
 
     return res.status(500).json({
@@ -983,7 +1094,7 @@ app.post('/api/license/verify', authLimiter, async (req, res) => {
 });
 
 // ==========================================
-// 9. SET OWNER PASSWORD
+// 14. SET OWNER PASSWORD - LIFETIME LICENSE
 // ==========================================
 
 app.post(
@@ -991,7 +1102,6 @@ app.post(
   authLimiter,
   requireSetupToken,
   async (req, res) => {
-
     const password = typeof req.body.password === 'string'
       ? req.body.password
       : '';
@@ -1003,10 +1113,8 @@ app.post(
     }
 
     try {
-
       const { data: shop, error: shopError } =
-        await admin
-          .from('shops')
+        await admin.from('shops')
           .select('id, owner_user_id, license_id, is_active')
           .eq('id', req.setup.shop_id)
           .eq('owner_user_id', req.setup.sub)
@@ -1035,42 +1143,31 @@ app.post(
 
       if (passwordError) throw passwordError;
 
-      const now = new Date();
-      const expiresAt = new Date(
-        now.getTime() + TRIAL_DAYS * 24 * 60 * 60 * 1000
-      );
-
       const { error: licenseUpdateError } =
-        await admin
-          .from('licenses')
+        await admin.from('licenses')
           .update({
             status: 'active',
-            starts_at: now.toISOString(),
-            expires_at: expiresAt.toISOString()
+            starts_at: new Date().toISOString(),
+            expires_at: null
           })
           .eq('id', shop.license_id);
 
       if (licenseUpdateError) throw licenseUpdateError;
 
       const { error: shopUpdateError } =
-        await admin
-          .from('shops')
-          .update({
-            is_active: true
-          })
+        await admin.from('shops')
+          .update({ is_active: true })
           .eq('id', shop.id);
 
       if (shopUpdateError) throw shopUpdateError;
 
       return res.json({
         ok: true,
-        message: 'ตั้งรหัสผ่านและเปิดใช้งานร้านสำเร็จ',
-        trial_days: TRIAL_DAYS,
-        expires_at: expiresAt.toISOString()
+        message: 'ตั้งรหัสผ่านและเปิดใช้งาน License ถาวรสำเร็จ',
+        license_type: 'lifetime'
       });
 
     } catch (error) {
-
       console.error('Set password error:', error.message);
 
       return res.status(500).json({
@@ -1079,21 +1176,19 @@ app.post(
     }
   }
 );
+
 // ==========================================
-// 10. OWNER LOGIN
+// 15. OWNER LOGIN - LIFETIME LICENSE
 // ==========================================
 
 app.post('/api/owner/login', authLimiter, async (req, res) => {
-
   const shopCode = clean(
-    req.body.shop_code,
-    24
+    req.body.shop_code, 24
   ).toUpperCase();
 
-  const password =
-    typeof req.body.password === 'string'
-      ? req.body.password
-      : '';
+  const password = typeof req.body.password === 'string'
+    ? req.body.password
+    : '';
 
   if (!shopCode || !password) {
     return res.status(400).json({
@@ -1102,13 +1197,9 @@ app.post('/api/owner/login', authLimiter, async (req, res) => {
   }
 
   try {
-
     const { data: shop, error: shopError } =
-      await admin
-        .from('shops')
-        .select(
-          'id, owner_user_id, license_id, shop_code, shop_name, email, is_active'
-        )
+      await admin.from('shops')
+        .select('id, owner_user_id, license_id, shop_code, shop_name, email, is_active')
         .eq('shop_code', shopCode)
         .maybeSingle();
 
@@ -1120,12 +1211,7 @@ app.post('/api/owner/login', authLimiter, async (req, res) => {
       !shop.is_active ||
       !shop.license_id
     ) {
-      await recordAttempt(
-        shopCode,
-        'owner_login',
-        false,
-        req
-      );
+      await recordAttempt(shopCode, 'owner_login', false, req);
 
       return res.status(401).json({
         error: 'Shop Code หรือรหัสผ่านไม่ถูกต้อง'
@@ -1133,31 +1219,18 @@ app.post('/api/owner/login', authLimiter, async (req, res) => {
     }
 
     const { data: license, error: licenseError } =
-      await admin
-        .from('licenses')
-        .select('status, expires_at')
+      await admin.from('licenses')
+        .select('status')
         .eq('id', shop.license_id)
         .maybeSingle();
 
     if (licenseError) throw licenseError;
 
-    if (
-      !license ||
-      license.status !== 'active' ||
-      (
-        license.expires_at &&
-        new Date(license.expires_at).getTime() < Date.now()
-      )
-    ) {
-      await recordAttempt(
-        shopCode,
-        'owner_login',
-        false,
-        req
-      );
+    if (!license || license.status !== 'active') {
+      await recordAttempt(shopCode, 'owner_login', false, req);
 
       return res.status(403).json({
-        error: 'License หมดอายุหรือถูกระงับ'
+        error: 'License ถูกระงับหรือยกเลิก'
       });
     }
 
@@ -1174,24 +1247,14 @@ app.post('/api/owner/login', authLimiter, async (req, res) => {
       authData.user.id !== shop.owner_user_id ||
       !authData.session
     ) {
-      await recordAttempt(
-        shopCode,
-        'owner_login',
-        false,
-        req
-      );
+      await recordAttempt(shopCode, 'owner_login', false, req);
 
       return res.status(401).json({
         error: 'Shop Code หรือรหัสผ่านไม่ถูกต้อง'
       });
     }
 
-    await recordAttempt(
-      shopCode,
-      'owner_login',
-      true,
-      req
-    );
+    await recordAttempt(shopCode, 'owner_login', true, req);
 
     return res.json({
       ok: true,
@@ -1207,7 +1270,6 @@ app.post('/api/owner/login', authLimiter, async (req, res) => {
     });
 
   } catch (error) {
-
     console.error('Owner login error:', error.message);
 
     return res.status(500).json({
@@ -1217,11 +1279,281 @@ app.post('/api/owner/login', authLimiter, async (req, res) => {
 });
 
 // ==========================================
-// 11. ERROR HANDLER
+// 16. ADMIN - RENEW ONE SHOP
+// ==========================================
+
+app.post(
+  '/api/admin/shops/:id/renew',
+  requireSystemAdmin,
+  async (req, res) => {
+    const shopId = clean(req.params.id, 50);
+    const months = Number(req.body.months);
+    const amount = req.body.amount == null || req.body.amount === ''
+      ? null
+      : Number(req.body.amount);
+    const note = clean(req.body.note, 500);
+
+    if (
+      !/^[0-9a-f-]{36}$/i.test(shopId) ||
+      !Number.isInteger(months) ||
+      months < 1 ||
+      months > 120 ||
+      (amount !== null && (!Number.isFinite(amount) || amount < 0))
+    ) {
+      return res.status(400).json({
+        error: 'ข้อมูลการต่อบริการไม่ถูกต้อง'
+      });
+    }
+
+    try {
+      const { data: shop, error: shopError } =
+        await admin.from('shops')
+          .select('id, shop_name, shop_code, is_active, license_id')
+          .eq('id', shopId)
+          .maybeSingle();
+
+      if (shopError) throw shopError;
+
+      if (!shop) {
+        return res.status(404).json({
+          error: 'ไม่พบร้านที่ต้องการต่อบริการ'
+        });
+      }
+
+      const { data: latest, error: latestError } =
+        await admin.from('shop_service_payments')
+          .select('service_until')
+          .eq('shop_id', shopId)
+          .order('service_until', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+      if (latestError) throw latestError;
+
+      const today = dateString(new Date());
+      const serviceFrom = latest && latest.service_until > today
+        ? latest.service_until
+        : today;
+
+      const serviceUntil = addMonths(serviceFrom, months);
+
+      const { data: payment, error: paymentError } =
+        await admin.from('shop_service_payments')
+          .insert({
+            shop_id: shopId,
+            months,
+            amount,
+            service_from: serviceFrom,
+            service_until: serviceUntil,
+            paid_at: new Date().toISOString(),
+            note: note || null
+          })
+          .select('*')
+          .single();
+
+      if (paymentError) throw paymentError;
+
+      return res.json({
+        ok: true,
+        message: 'บันทึกการต่อบริการสำเร็จ License เดิมยังคงเดิม',
+        shop: {
+          id: shop.id,
+          shop_name: shop.shop_name,
+          shop_code: shop.shop_code
+        },
+        service: payment,
+        license_changed: false
+      });
+
+    } catch (error) {
+      console.error('Renew shop error:', error.message);
+
+      return res.status(500).json({
+        error: 'บันทึกการต่อบริการไม่สำเร็จ'
+      });
+    }
+  }
+);
+
+// ==========================================
+// 17. ADMIN - RENEW ALL ACTIVE SHOPS
+// ==========================================
+
+app.post(
+  '/api/admin/shops/renew-all',
+  requireSystemAdmin,
+  async (req, res) => {
+    const months = Number(req.body.months);
+    const amount = req.body.amount == null || req.body.amount === ''
+      ? null
+      : Number(req.body.amount);
+    const note = clean(req.body.note, 500);
+
+    if (
+      req.body.confirm_all !== true ||
+      !Number.isInteger(months) ||
+      months < 1 ||
+      months > 120 ||
+      (amount !== null && (!Number.isFinite(amount) || amount < 0))
+    ) {
+      return res.status(400).json({
+        error: 'กรุณายืนยัน confirm_all และตรวจสอบข้อมูลการต่อบริการ'
+      });
+    }
+
+    try {
+      const { data: shops, error: shopsError } =
+        await admin.from('shops')
+          .select('id, shop_name, shop_code')
+          .eq('is_active', true)
+          .eq('is_test', false)
+          .limit(10000);
+
+      if (shopsError) throw shopsError;
+
+      if (!shops || shops.length === 0) {
+        return res.json({
+          ok: true,
+          message: 'ไม่มีร้านที่เปิดใช้งานให้ต่อบริการ',
+          renewed: 0,
+          failed: 0,
+          license_changed: false
+        });
+      }
+
+      let renewed = 0;
+      const failures = [];
+
+      for (const shop of shops) {
+        try {
+          const { data: latest, error: latestError } =
+            await admin.from('shop_service_payments')
+              .select('service_until')
+              .eq('shop_id', shop.id)
+              .order('service_until', { ascending: false })
+              .limit(1)
+              .maybeSingle();
+
+          if (latestError) throw latestError;
+
+          const today = dateString(new Date());
+          const serviceFrom =
+            latest && latest.service_until > today
+              ? latest.service_until
+              : today;
+
+          const serviceUntil = addMonths(serviceFrom, months);
+
+          const { error: insertError } =
+            await admin.from('shop_service_payments')
+              .insert({
+                shop_id: shop.id,
+                months,
+                amount,
+                service_from: serviceFrom,
+                service_until: serviceUntil,
+                paid_at: new Date().toISOString(),
+                note: note || 'ต่อบริการพร้อมกันทุกร้าน'
+              });
+
+          if (insertError) throw insertError;
+
+          renewed++;
+
+        } catch (err) {
+          console.error(
+            'Bulk renewal failed:',
+            shop.id,
+            err.message
+          );
+
+          failures.push({
+            shop_id: shop.id,
+            shop_code: shop.shop_code,
+            error: 'บันทึกไม่สำเร็จ'
+          });
+        }
+      }
+
+      return res.json({
+        ok: failures.length === 0,
+        message: 'ดำเนินการต่อบริการร้านที่เปิดใช้งานแล้ว',
+        total: shops.length,
+        renewed,
+        failed: failures.length,
+        failures,
+        license_changed: false
+      });
+
+    } catch (error) {
+      console.error('Renew all error:', error.message);
+
+      return res.status(500).json({
+        error: 'ต่อบริการทุกร้านไม่สำเร็จ'
+      });
+    }
+  }
+);
+
+// ==========================================
+// 18. ADMIN - DELETE ONE SHOP
+// ==========================================
+
+app.delete(
+  '/api/admin/shops/:id',
+  requireSystemAdmin,
+  async (req, res) => {
+    const shopId = clean(req.params.id, 50);
+
+    if (!/^[0-9a-f-]{36}$/i.test(shopId)) {
+      return res.status(400).json({
+        error: 'รหัสร้านไม่ถูกต้อง'
+      });
+    }
+
+    if (req.body.confirm_delete !== true) {
+      return res.status(400).json({
+        error: 'กรุณายืนยัน confirm_delete เป็น true'
+      });
+    }
+
+    try {
+      const { data, error } = await admin.rpc(
+        'admin_delete_shop',
+        { p_shop_id: shopId }
+      );
+
+      if (error) throw error;
+
+      return res.json({
+        ok: true,
+        message: 'ลบร้านและข้อมูลที่เกี่ยวข้องสำเร็จ',
+        result: data
+      });
+
+    } catch (error) {
+      console.error('Delete shop error:', error.message);
+
+      if (
+        String(error.message || '').includes('SHOP_NOT_FOUND')
+      ) {
+        return res.status(404).json({
+          error: 'ไม่พบร้านที่ต้องการลบ'
+        });
+      }
+
+      return res.status(500).json({
+        error: 'ลบร้านไม่สำเร็จ กรุณาตรวจสอบข้อมูลที่เกี่ยวข้อง'
+      });
+    }
+  }
+);
+
+// ==========================================
+// 19. ERROR HANDLER
 // ==========================================
 
 app.use((err, req, res, next) => {
-
   if (err.message === 'Origin not allowed') {
     return res.status(403).json({
       error: 'เว็บไซต์นี้ไม่ได้รับอนุญาตให้เรียก API'
@@ -1236,11 +1568,9 @@ app.use((err, req, res, next) => {
 });
 
 // ==========================================
-// 12. START SERVER
+// 20. START SERVER
 // ==========================================
 
 app.listen(PORT, () => {
-  console.log(
-    `AUTO SHOP PRO API running on port ${PORT}`
-  );
+  console.log(`AUTO SHOP PRO API running on port ${PORT}`);
 });

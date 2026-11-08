@@ -504,7 +504,22 @@ app.post('/api/register', authLimiter, async (req, res) => {
     if (shopError) throw shopError;
     createdShopId = shop.id;
 
+    
     await recordAttempt(email, 'register', true, req);
+
+    // แจ้งเจ้าของระบบทาง Gmail
+    // หากส่งไม่สำเร็จ จะไม่กระทบการสมัครร้าน
+    notifyOwner({
+      ownerName,
+      shopName,
+      shopCode: shop.shop_code,
+      customerEmail: email
+    }).catch(error => {
+      console.error(
+        'Owner notification failed:',
+        error && error.message ? error.message : error
+      );
+    });
 
     return res.status(201).json({
       ok: true,
@@ -517,6 +532,7 @@ app.post('/api/register', authLimiter, async (req, res) => {
     });
 
   } catch (error) {
+
 
     console.error('Register error:', JSON.stringify({
       step: createdShopId ? 'done' : createdLicenseId ? 'insert_shop' : createdUserId ? 'insert_license' : 'lookup_or_create_user',

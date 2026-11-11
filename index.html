@@ -1193,6 +1193,7 @@ function updateSum() {
   const r = calcPreview(); $('ck-addr-wrap').classList.toggle('hidden', r.type === 'pickup'); $('ck-map-wrap').classList.toggle('hidden', r.type === 'pickup');
   $('ck-sum').innerHTML = `<p class="muted" style="text-align:right">ค่าอาหาร ${money(r.sub)}${r.type === 'delivery' ? ' | ค่าจัดส่ง ' + (r.fee ? money(r.fee) : 'ฟรี') : ''}${r.disc ? ' | ส่วนลด -' + money(r.disc) : ''}</p>
     <p style="text-align:right"><b>ยอดรวม (โดยประมาณ) ${money(r.total)}</b></p>${r.msg ? `<p class="muted" style="text-align:right">${esc(r.msg)}</p>` : ''}<p class="muted" style="text-align:right">ระบบคำนวณราคาจริงอีกครั้งตอนยืนยัน</p>`;
+      checkQuoteReady(); // ✅ เพิ่มบรรทัดนี้ที่บรรทัดสุดท้าย
 }
 function renderCart() {
   $('c-count').textContent = CART.reduce((s, i) => s + i.qty, 0);

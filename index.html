@@ -1210,11 +1210,7 @@ function renderCart() {
 async function placeOrder() {
   if (!CART.length) return;
   const type = $('ck-type').value, addr = $('ck-addr').value.trim();
-  
-  // ✅ เพิ่ม 2 บรรทัดนี้ตรงนี้
   if (type === 'delivery' && !addr) return alert('⚠️ กรอกที่อยู่จัดส่ง');
-  if (type === 'delivery' && !QUOTE) return alert('⚠️ กรุณาปักหมุดจุดส่งและคำนวณค่าจัดส่งก่อนสั่งซื้อ');
-  
   TOKEN = TOKEN || crypto.randomUUID();                       // กันสั่งซ้ำจากการกดซ้ำ/ส่ง request ซ้ำ
   const btn = $('ck-btn'); btn.disabled = true;
   const items = CART.map(i => ({ product_id: i.product_id, qty: i.qty, options: i.options }));

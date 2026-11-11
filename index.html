@@ -1100,160 +1100,873 @@ async function savePromo() {
   await loadPromos(); renderPromoList(); alert('✅ บันทึกโปรโมชั่นแล้ว');
 }
 async function togglePromo(id, v) { const { error } = await db.from('shop_promotions').update({ is_active: v }).eq('id', id); if (error) return alert('❌ ' + error.message); await loadPromos(); renderPromoList(); }
-async function deletePromo(id) { if (!confirm('ลบโปรโมชั่นนี้? (ออเดอร์เก่ายังเก็บโค้ดและส่วนลดไว้)')) return; const { error } = await db.from('shop_promotions').delete().eq('id', id); if (error) return alert('❌ ' + error.message); await loadPromos(); renderPromoList(); }
+async function deletePromo(id) { if (!confirm('ลบโปรโมชั่นนี้? (ออเดอร์เก่ายังเก็บโค้ดและส่วนลดไว้)')) return; const { error } = await db.from('shop_promotions').delete().eq('id', id); if (error) return alert('❌ ' + error.message); await loadPromos(); 
+ 
+// =====================================================
+// 🧑 ลูกค้า — รหัสผ่านเก็บในหน่วยความจำเท่านั้น
+// รองรับรับเอง / จัดส่ง / ปักหมุด / คำนวณค่าจัดส่ง
+// =====================================================
 
-// =====================================================
-// 🧑 ลูกค้า — รหัสผ่านเก็บในหน่วยความจำเท่านั้น (ไม่ลง LocalStorage)
-// =====================================================
 let CUST = null, CART = [], TOKEN = null, CREG = false;
-const cargs = () => ({ p_code: CUST.code, p_phone: CUST.phone, p_pass: CUST.pass });
-function toggleCustReg() {
-  CREG = !CREG; $('cl-reg').classList.toggle('hidden', !CREG);
-  $('cl-title').textContent = CREG ? '📝 สมัครสมาชิกลูกค้า' : '🧑 เข้าสู่ระบบลูกค้า';
-  $('cl-btn').textContent = CREG ? '📝 สมัครสมาชิก' : '✅ เข้าสู่ระบบ';
-  $('cl-toggle').textContent = CREG ? 'มีบัญชีแล้ว? เข้าสู่ระบบ' : 'ลูกค้าใหม่? สมัครสมาชิก';
-}
-async function customerSubmit() {
-  if (!needDb()) return;
-  const code = $('cl-code').value.trim().toUpperCase(), phone = $('cl-phone').value.trim(), pass = $('cl-pass').value;
-  if (!code || !/^[0-9]{9,10}$/.test(phone) || !pass) return note('cl-msg', 'err', '⚠️ กรอกรหัสร้าน เบอร์โทร 9-10 หลัก และรหัสผ่านให้ครบ');
-  if (CREG) {
-    const name = $('cl-name').value.trim();
-    if (!name) return note('cl-msg', 'err', '⚠️ กรอกชื่อ');
-    if (pass.length < 6 || pass === phone) return note('cl-msg', 'err', '⚠️ รหัสผ่านอย่างน้อย 6 ตัว และต้องไม่ใช่เบอร์โทร');
-    const { error } = await db.rpc('register_customer', { p_code: code, p_phone: phone, p_name: name, p_address: $('cl-addr').value.trim(), p_pass: pass });
-    if (error) return note('cl-msg', 'err', '❌ ' + errMsg(error));
-  }
-  CUST = { code, phone, pass, state: null };
-  if (!(await refreshCustomer())) { CUST = null; return note('cl-msg', 'err', '❌ รหัสร้าน เบอร์โทร หรือรหัสผ่านไม่ถูกต้อง'); }
-  $('cl-pass').value = ''; CART = []; TOKEN = null; $('cl-msg').className = 'msg';
-  showPage('page-customer'); customerTab('menu');
-  setTimer(() => { if (CUST) refreshCustomer(true); }, 20000);
-}
-async function refreshCustomer(quiet) {
-  const { data, error } = await db.rpc('customer_state', cargs());
-  if (error) { if (!quiet) alert('❌ ' + errMsg(error)); return false; }
-  if (!data) return false;
-  CUST.state = data;
-  $('c-shop').textContent = data.shop.name; $('c-name').textContent = data.customer.name;
-  $('c-closed').classList.toggle('hidden', data.shop.open);
-  renderMenu(); if (!quiet) renderCart(); renderCustOrders(); renderCustPromos(); return true;
-}
-function customerLogout() { clearInterval(timer); CUST = null; CART = []; showPage('page-choose'); }
-function customerTab(n) { activate('c-tabs', n); document.querySelectorAll('.ct').forEach(c => c.classList.add('hidden')); $('ctab-' + n).classList.remove('hidden'); if (CUST) refreshCustomer(true); }
-bindTabs('c-tabs', customerTab);
+let QUOTE_ADDR = '';
 
-function renderMenu() {
-  const ps = CUST.state.products; if (!ps.length) { $('c-menu').innerHTML = '<div class="card"><p class="muted" style="text-align:center">ร้านยังไม่มีเมนูพร้อมขาย</p></div>'; return; }
-  const cats = [...new Set(ps.map(p => p.category))];
-  $('c-menu').innerHTML = cats.map(c => `<div class="card"><h2>${esc(c)}</h2><div class="menu">${ps.filter(p => p.category === c).map(p => `
-    <div class="item">${/^https:/.test(p.image_url || '') ? `<img src="${esc(p.image_url)}" alt="${esc(p.name)}" loading="lazy">` : '<div class="ph">🍽️</div>'}
-    <div><b>${esc(p.name)}</b><p class="muted">${esc(p.description || '')}</p><p><b>${money(p.price)}</b></p>
-    <button class="sm btn-success" style="width:100%" onclick="openPick('${p.id}')" ${CUST.state.shop.open ? '' : 'disabled'}>เลือก</button></div></div>`).join('')}</div></div>`).join('');
+const cargs = () => ({
+  p_code: CUST.code,
+  p_phone: CUST.phone,
+  p_pass: CUST.pass
+});
+
+// -----------------------------------------------------
+// ล้างใบคำนวณค่าจัดส่ง
+// -----------------------------------------------------
+function clearDeliveryQuote() {
+  QUOTE = null;
+  QUOTE_ADDR = '';
+
+  const q = $('ck-quote');
+  if (q) q.textContent = '';
 }
-function openPick(pid) {
-  const p = CUST.state.products.find(x => x.id === pid); if (!p) return;
-  const groups = (p.options || []).map((g, gi) => `<div style="margin-top:10px"><b>${esc(g.name)}</b> <span class="muted">${g.required ? '(ต้องเลือก)' : '(ไม่บังคับ)'}${g.multi ? ' เลือกได้หลายอย่าง' : ''}</span>
-    ${g.items.map((it, ii) => `<label style="color:#1e293b;font-size:14px"><input type="${g.multi ? 'checkbox' : 'radio'}" name="g${gi}" value="${ii}" style="width:auto;margin-right:6px">${esc(it.label)}${it.extra ? ' (+' + it.extra + ')' : ''}</label>`).join('')}</div>`).join('');
-  openModal(`<h2>${esc(p.name)} — ${money(p.price)}</h2>${groups}<label>จำนวน</label><input id="pk-qty" type="number" min="1" max="99" value="1"><label>หมายเหตุ</label><input id="pk-note" maxlength="100" placeholder="เช่น ไม่ใส่ผัก">
-    <div class="btns"><button class="btn-success" onclick="addToCart('${p.id}')">เพิ่มลงตะกร้า</button><button class="btn-gray" onclick="closeModal()">ปิด</button></div>`);
-}
-function addToCart(pid) {
-  const p = CUST.state.products.find(x => x.id === pid), qty = parseInt($('pk-qty').value, 10);
-  if (!(qty >= 1 && qty <= 99)) return alert('⚠️ จำนวนต้องอยู่ระหว่าง 1-99');
-  const options = []; let unit = Number(p.price);
-  for (let gi = 0; gi < (p.options || []).length; gi++) {
-    const g = p.options[gi], sel = [...document.querySelectorAll(`input[name="g${gi}"]:checked`)].map(x => g.items[+x.value]);
-    if (g.required && !sel.length) return alert('⚠️ กรุณาเลือก "' + g.name + '"');
-    if (sel.length > 1 && !g.multi) return alert('⚠️ "' + g.name + '" เลือกได้อย่างเดียว');
-    sel.forEach(s => { options.push({ group: g.name, label: s.label }); unit += Number(s.extra || 0); });
+
+// -----------------------------------------------------
+// เปลี่ยนวิธีรับสินค้า
+// -----------------------------------------------------
+function deliveryTypeChanged() {
+  if ($('ck-type').value === 'pickup') {
+    clearDeliveryQuote();
   }
-  CART.push({ product_id: pid, name: p.name, qty, options, unit, remark: $('pk-note').value.trim() });
-  TOKEN = null; closeModal(); renderCart();
-}
-function renderCustPromos() {
-  const ps = CUST.state.promos || [];
-  $('c-promos').innerHTML = ps.length ? `<div class="card" style="background:#FFF7E6"><h2>🏷️ โปรโมชั่นของร้าน</h2>${ps.map(p => `<p><span class="badge b-wait" style="font-size:13px">${esc(p.code)}</span> <b>${esc(p.name)}</b> <span class="muted">${esc(promoText(p))}${p.ends_at ? ' ถึง ' + new Date(p.ends_at).toLocaleDateString('th-TH') : ''}</span></p>`).join('')}<p class="muted">กรอกโค้ดในตะกร้าตอนยืนยันสั่งซื้อ</p></div>` : '';
-}
-function calcPreview() {
-  const st = CUST.state, sub = CART.reduce((s, i) => s + i.unit * i.qty, 0), type = $('ck-type') ? $('ck-type').value : 'delivery';
-  let fee = type === 'delivery' ? (QUOTE ? Number(QUOTE.fee) : Number(st.shop.delivery_fee || 0)) : 0, disc = 0, msg = '';
-  const code = ($('ck-promo') ? $('ck-promo').value : '').trim().toUpperCase();
-  if (code) {
-    const p = (st.promos || []).find(x => x.code === code);
-    if (!p) msg = 'ระบบจะตรวจสอบโค้ดนี้ตอนยืนยันสั่งซื้อ';
-    else if (sub < Number(p.min_amount)) msg = 'โค้ดนี้ใช้เมื่อสั่งครบ ' + money(p.min_amount);
-    else if (p.kind === 'percent') disc = Math.round(sub * Number(p.value)) / 100;
-    else if (p.kind === 'baht') disc = Math.min(Number(p.value), sub);
-    else if (type === 'delivery') fee = 0; else msg = 'โค้ดส่งฟรีใช้กับการจัดส่งเท่านั้น';
-  }
-  return { sub, fee, disc, total: sub - disc + fee, msg, type };
-}
-function updateSum() {
-  const r = calcPreview(); $('ck-addr-wrap').classList.toggle('hidden', r.type === 'pickup'); $('ck-map-wrap').classList.toggle('hidden', r.type === 'pickup');
-  $('ck-sum').innerHTML = `<p class="muted" style="text-align:right">ค่าอาหาร ${money(r.sub)}${r.type === 'delivery' ? ' | ค่าจัดส่ง ' + (r.fee ? money(r.fee) : 'ฟรี') : ''}${r.disc ? ' | ส่วนลด -' + money(r.disc) : ''}</p>
-    <p style="text-align:right"><b>ยอดรวม (โดยประมาณ) ${money(r.total)}</b></p>${r.msg ? `<p class="muted" style="text-align:right">${esc(r.msg)}</p>` : ''}<p class="muted" style="text-align:right">ระบบคำนวณราคาจริงอีกครั้งตอนยืนยัน</p>`;
-}
-function renderCart() {
-  $('c-count').textContent = CART.reduce((s, i) => s + i.qty, 0);
-  if (!CART.length) { $('c-cart').innerHTML = '<p class="muted" style="text-align:center;padding:12px">ตะกร้าว่าง</p>'; return; }
-  const dOn = CUST.state.shop.delivery_enabled !== false;
-  $('c-cart').innerHTML = CART.map((i, k) => `<div class="top oc"><div><b>${esc(i.name)}</b> × ${i.qty}<p class="muted">${i.options.map(o => esc(o.label)).join(', ')}${i.remark ? ' | ' + esc(i.remark) : ''}</p></div><div>${money(i.unit * i.qty)} <button class="sm btn-danger" onclick="CART.splice(${k},1);TOKEN=null;renderCart()">ลบ</button></div></div>`).join('') +
-    `<label>รับสินค้าแบบไหน</label><select id="ck-type" onchange="updateSum()">${dOn ? '<option value="delivery">🛵 จัดส่งถึงที่</option>' : ''}<option value="pickup">🏪 รับเองที่ร้าน</option></select>
-    <div id="ck-addr-wrap"><label>ที่อยู่จัดส่ง</label><input id="ck-addr" value="${esc(CUST.state.customer.address || '')}" maxlength="300"></div>
-<div id="ck-map-wrap"><button class="btn-gray" onclick="pickDelivery()">📍 ปักหมุดจุดส่ง / คำนวณค่าจัดส่ง</button><p id="ck-quote" class="muted"></p></div>
-    <label>หมายเหตุถึงร้าน</label><input id="ck-note" maxlength="300">
-    <label>โค้ดโปรโมชั่น (ถ้ามี)</label><input id="ck-promo" maxlength="20" autocapitalize="characters" oninput="updateSum()" placeholder="เช่น NEW10">
-    <div id="ck-sum" style="margin-top:8px"></div><button id="ck-btn" class="btn-success" onclick="placeOrder()">✅ ยืนยันสั่งซื้อ</button>`;
   updateSum();
 }
-async function placeOrder() {
-  if (!CART.length) return;
-  const type = $('ck-type').value, addr = $('ck-addr').value.trim();
-  if (type === 'delivery' && !addr) return alert('⚠️ กรอกที่อยู่จัดส่ง');
-  TOKEN = TOKEN || crypto.randomUUID();                       // กันสั่งซ้ำจากการกดซ้ำ/ส่ง request ซ้ำ
-  const btn = $('ck-btn'); btn.disabled = true;
-  const items = CART.map(i => ({ product_id: i.product_id, qty: i.qty, options: i.options }));
-  const rem = CART.filter(i => i.remark).map(i => i.name + ': ' + i.remark).join('; ');
-  const { data, error } = await db.rpc('place_order', { ...cargs(), p_items: items, p_note: [$('ck-note').value.trim(), rem].filter(Boolean).join(' | '),
-    p_address: type === 'delivery' ? addr : '', p_token: TOKEN, p_type: type, p_promo: $('ck-promo').value.trim(), p_quote: type === 'delivery' && QUOTE ? QUOTE.quote_id : null });
-  btn.disabled = false;
-  if (error && /quote_(required|invalid)/.test(String(error.message))) { QUOTE = null; updateSum(); return alert('⚠️ กรุณาปักหมุดจุดส่งและคำนวณค่าจัดส่งใหม่'); }
-if (error) return alert('❌ สั่งซื้อไม่สำเร็จ: ' + errMsg(error));
-  if (!data) return alert('❌ เข้าสู่ระบบหมดอายุ กรุณาเข้าสู่ระบบใหม่');
-  CART = []; TOKEN = null; QUOTE = null; renderCart();
-  alert('✅ สั่งซื้อสำเร็จ เลขที่ ' + data.order_no + ' ยอด ' + money(data.total) + '\nโอนเงินตามบัญชีร้านแล้วแนบสลิปในหน้า "คำสั่งซื้อของฉัน"');
-  await refreshCustomer(true); customerTab('orders');
-}
-function renderCustOrders() {
-  if ([...document.querySelectorAll('#c-orders input[type=file]')].some(i => i.files.length)) return; // ไม่ล้างไฟล์ที่กำลังเลือก
-  const s = CUST.state, b = s.shop;
-  $('c-bank').innerHTML = b.bank_account_number ? `<p>ธนาคาร: ${esc(b.bank_name)}</p><p>ชื่อบัญชี: ${esc(b.bank_account_name)}</p><p>เลขบัญชี: <b>${esc(b.bank_account_number)}</b></p>` : '<p class="muted">ร้านยังไม่ได้ตั้งค่าบัญชีรับเงิน กรุณาสอบถามร้าน</p>';
-  $('c-orders').innerHTML = s.orders.length ? s.orders.map(o => `<div class="card"><div class="top"><b>🧾 ${esc(o.order_no)}</b><div>${ob(o)}${badge(PAY, o.payment_status)}</div></div>
-    <p class="muted">${fdate(o.created_at)} | 📍 ${esc(o.address || '-')}</p>${itemsHtml(o.items)}${sumHtml(o)}
-    ${o.delivered_at && o.status !== 'completed' ? '<p class="muted">🛵 คนส่งของแจ้งว่าส่งถึงแล้ว กรุณากดยืนยันรับสินค้า</p>' : ''}
-    ${['unpaid', 'rejected'].includes(o.payment_status) && o.status !== 'cancelled' ? `<label>แนบหลักฐานการชำระเงิน (รูปสลิป JPG/PNG/WebP หรือ PDF ไม่เกิน 3MB)</label><input type="file" id="slip-${o.id}" accept="image/jpeg,image/png,image/webp,application/pdf">
-      <button class="btn-info" onclick="submitSlip('${o.id}')">📎 ส่งหลักฐานการชำระเงิน</button>` : ''}
-    ${(o.delivery_type === 'pickup' ? o.status === 'ready' : o.status === 'delivering') ? `<button class="btn-success" onclick="confirmReceipt('${o.id}')">📦 ${o.delivery_type === 'pickup' ? 'รับสินค้าแล้ว' : 'ได้รับสินค้าแล้ว (จัดส่งสำเร็จ)'}</button>` : ''}</div>`).join('') : '<div class="card"><p class="muted" style="text-align:center">ยังไม่มีคำสั่งซื้อ</p></div>';
-}
-async function submitSlip(oid) {
-  const f = $('slip-' + oid).files[0]; if (!f) return alert('⚠️ เลือกไฟล์หลักฐานก่อน');
-  const ext = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' }[f.type];
-  if (!ext) return alert('⚠️ รองรับเฉพาะ JPG/PNG/WebP/PDF'); if (f.size > 3145728) return alert('⚠️ ไฟล์ต้องไม่เกิน 3MB');
-  const path = oid + '/' + crypto.randomUUID() + '.' + ext;
-  const up = await db.storage.from('payment-proofs').upload(path, f, { contentType: f.type });
-  if (up.error) return alert('❌ อัปโหลดไม่สำเร็จ: ' + up.error.message);
-  const { data, error } = await db.rpc('customer_submit_payment', { ...cargs(), p_order: oid, p_path: path });
-  if (error) return alert('❌ ' + errMsg(error)); if (!data) return alert('❌ ส่งหลักฐานไม่สำเร็จ (ออเดอร์นี้อาจชำระแล้วหรือถูกยกเลิก)');
-  $('slip-' + oid).value = ''; alert('✅ ส่งหลักฐานแล้ว รอร้านตรวจสอบ'); await refreshCustomer(true);
-}
-async function confirmReceipt(oid) {
-  if (!confirm('ยืนยันว่าได้รับสินค้าแล้ว?')) return;
-  const { data, error } = await db.rpc('customer_confirm_receipt', { ...cargs(), p_order: oid });
-  if (error) return alert('❌ ' + errMsg(error)); if (!data) return alert('❌ ยืนยันไม่สำเร็จ (สถานะออเดอร์ยังไม่พร้อม)');
-  alert('✅ ขอบคุณที่ใช้บริการ'); await refreshCustomer(true);
+
+// -----------------------------------------------------
+// ตรวจสอบเมื่อแก้ไขที่อยู่จัดส่ง
+// -----------------------------------------------------
+function deliveryAddressChanged() {
+  if (!QUOTE) return;
+
+  const value = $('ck-addr').value.trim();
+
+  if (value !== QUOTE_ADDR) {
+    clearDeliveryQuote();
+    updateSum();
+  }
 }
 
+// -----------------------------------------------------
+// สมัคร / เข้าสู่ระบบลูกค้า
+// -----------------------------------------------------
+function toggleCustReg() {
+  CREG = !CREG;
+  $('cl-reg').classList.toggle('hidden', !CREG);
+  $('cl-title').textContent = CREG
+    ? '📝 สมัครสมาชิกลูกค้า'
+    : '🧑 เข้าสู่ระบบลูกค้า';
+  $('cl-btn').textContent = CREG
+    ? '📝 สมัครสมาชิก'
+    : '✅ เข้าสู่ระบบ';
+  $('cl-toggle').textContent = CREG
+    ? 'มีบัญชีแล้ว? เข้าสู่ระบบ'
+    : 'ลูกค้าใหม่? สมัครสมาชิก';
+}
+
+async function customerSubmit() {
+  if (!needDb()) return;
+
+  const code = $('cl-code').value.trim().toUpperCase();
+  const phone = $('cl-phone').value.trim();
+  const pass = $('cl-pass').value;
+
+  if (!code || !/^[0-9]{9,10}$/.test(phone) || !pass) {
+    return note(
+      'cl-msg',
+      'err',
+      '⚠️ กรอกรหัสร้าน เบอร์โทร 9-10 หลัก และรหัสผ่านให้ครบ'
+    );
+  }
+
+  if (CREG) {
+    const name = $('cl-name').value.trim();
+
+    if (!name) return note('cl-msg', 'err', '⚠️ กรอกชื่อ');
+
+    if (pass.length < 6 || pass === phone) {
+      return note(
+        'cl-msg',
+        'err',
+        '⚠️ รหัสผ่านอย่างน้อย 6 ตัว และต้องไม่ใช่เบอร์โทร'
+      );
+    }
+
+    const { error } = await db.rpc('register_customer', {
+      p_code: code,
+      p_phone: phone,
+      p_name: name,
+      p_address: $('cl-addr').value.trim(),
+      p_pass: pass
+    });
+
+    if (error) {
+      return note('cl-msg', 'err', '❌ ' + errMsg(error));
+    }
+  }
+
+  CUST = { code, phone, pass, state: null };
+
+  if (!(await refreshCustomer())) {
+    CUST = null;
+    return note(
+      'cl-msg',
+      'err',
+      '❌ รหัสร้าน เบอร์โทร หรือรหัสผ่านไม่ถูกต้อง'
+    );
+  }
+
+  custRemember(code, phone, CUST.state.shop.name);
+
+  $('cl-pass').value = '';
+  CART = [];
+  TOKEN = null;
+  clearDeliveryQuote();
+  $('cl-msg').className = 'msg';
+
+  showPage('page-customer');
+  customerTab('menu');
+
+  setTimer(() => {
+    if (CUST) refreshCustomer(true);
+  }, 20000);
+}
+
+async function refreshCustomer(quiet) {
+  const { data, error } = await db.rpc('customer_state', cargs());
+
+  if (error) {
+    if (!quiet) alert('❌ ' + errMsg(error));
+    return false;
+  }
+
+  if (!data) return false;
+
+  CUST.state = data;
+
+  $('c-shop').textContent = data.shop.name;
+  $('c-name').textContent = data.customer.name;
+  $('c-closed').classList.toggle('hidden', data.shop.open);
+
+  renderMenu();
+
+  if (!quiet) renderCart();
+
+  renderCustOrders();
+  renderCustPromos();
+
+  return true;
+}
+
+function customerLogout() {
+  clearInterval(timer);
+  CUST = null;
+  CART = [];
+  TOKEN = null;
+  clearDeliveryQuote();
+  showPage('page-choose');
+}
+
+function customerTab(n) {
+  activate('c-tabs', n);
+
+  document.querySelectorAll('.ct').forEach(c => {
+    c.classList.add('hidden');
+  });
+
+  $('ctab-' + n).classList.remove('hidden');
+
+  if (CUST) refreshCustomer(true);
+}
+
+bindTabs('c-tabs', customerTab);
+
+// -----------------------------------------------------
+// เมนูสินค้า
+// -----------------------------------------------------
+function renderMenu() {
+  const ps = CUST.state.products;
+
+  if (!ps.length) {
+    $('c-menu').innerHTML =
+      '<div class="card"><p class="muted" style="text-align:center">ร้านยังไม่มีเมนูพร้อมขาย</p></div>';
+    return;
+  }
+
+  const cats = [...new Set(ps.map(p => p.category))];
+
+  $('c-menu').innerHTML = cats.map(c => `
+    <div class="card">
+      <h2>${esc(c)}</h2>
+      <div class="menu">
+        ${ps.filter(p => p.category === c).map(p => `
+          <div class="item">
+            ${/^https:/.test(p.image_url || '')
+              ? `<img src="${esc(p.image_url)}" alt="${esc(p.name)}" loading="lazy">`
+              : '<div class="ph">🍽️</div>'}
+            <div>
+              <b>${esc(p.name)}</b>
+              <p class="muted">${esc(p.description || '')}</p>
+              <p><b>${money(p.price)}</b></p>
+              <button
+                class="sm btn-success"
+                style="width:100%"
+                onclick="openPick('${p.id}')"
+                ${CUST.state.shop.open ? '' : 'disabled'}
+              >เลือก</button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `).join('');
+}
+
+// -----------------------------------------------------
+// เลือกตัวเลือกสินค้า
+// -----------------------------------------------------
+function openPick(pid) {
+  const p = CUST.state.products.find(x => x.id === pid);
+  if (!p) return;
+
+  const groups = (p.options || []).map((g, gi) => `
+    <div style="margin-top:10px">
+      <b>${esc(g.name)}</b>
+      <span class="muted">
+        ${g.required ? '(ต้องเลือก)' : '(ไม่บังคับ)'}
+        ${g.multi ? ' เลือกได้หลายอย่าง' : ''}
+      </span>
+
+      ${g.items.map((it, ii) => `
+        <label style="color:#1e293b;font-size:14px">
+          <input
+            type="${g.multi ? 'checkbox' : 'radio'}"
+            name="g${gi}"
+            value="${ii}"
+            style="width:auto;margin-right:6px"
+          >
+          ${esc(it.label)}
+          ${it.extra ? ' (+' + it.extra + ')' : ''}
+        </label>
+      `).join('')}
+    </div>
+  `).join('');
+
+  openModal(`
+    <h2>${esc(p.name)} — ${money(p.price)}</h2>
+    ${groups}
+    <label>จำนวน</label>
+    <input id="pk-qty" type="number" min="1" max="99" value="1">
+    <label>หมายเหตุ</label>
+    <input id="pk-note" maxlength="100" placeholder="เช่น ไม่ใส่ผัก">
+
+    <div class="btns">
+      <button class="btn-success" onclick="addToCart('${p.id}')">
+        เพิ่มลงตะกร้า
+      </button>
+      <button class="btn-gray" onclick="closeModal()">ปิด</button>
+    </div>
+  `);
+}
+
+function addToCart(pid) {
+  const p = CUST.state.products.find(x => x.id === pid);
+  const qty = parseInt($('pk-qty').value, 10);
+
+  if (!(qty >= 1 && qty <= 99)) {
+    return alert('⚠️ จำนวนต้องอยู่ระหว่าง 1-99');
+  }
+
+  const options = [];
+  let unit = Number(p.price);
+
+  for (let gi = 0; gi < (p.options || []).length; gi++) {
+    const g = p.options[gi];
+
+    const sel = [
+      ...document.querySelectorAll(`input[name="g${gi}"]:checked`)
+    ].map(x => g.items[+x.value]);
+
+    if (g.required && !sel.length) {
+      return alert('⚠️ กรุณาเลือก "' + g.name + '"');
+    }
+
+    if (sel.length > 1 && !g.multi) {
+      return alert('⚠️ "' + g.name + '" เลือกได้อย่างเดียว');
+    }
+
+    sel.forEach(s => {
+      options.push({ group: g.name, label: s.label });
+      unit += Number(s.extra || 0);
+    });
+  }
+
+  CART.push({
+    product_id: pid,
+    name: p.name,
+    qty,
+    options,
+    unit,
+    remark: $('pk-note').value.trim()
+  });
+
+  TOKEN = null;
+  closeModal();
+  renderCart();
+}
+
+// -----------------------------------------------------
+// โปรโมชั่นลูกค้า
+// -----------------------------------------------------
+function renderCustPromos() {
+  const ps = CUST.state.promos || [];
+
+  $('c-promos').innerHTML = ps.length
+    ? `<div class="card" style="background:#FFF7E6">
+        <h2>🏷️ โปรโมชั่นของร้าน</h2>
+        ${ps.map(p => `
+          <p>
+            <span class="badge b-wait" style="font-size:13px">
+              ${esc(p.code)}
+            </span>
+            <b>${esc(p.name)}</b>
+            <span class="muted">
+              ${esc(promoText(p))}
+              ${p.ends_at
+                ? ' ถึง ' + new Date(p.ends_at).toLocaleDateString('th-TH')
+                : ''}
+            </span>
+          </p>
+        `).join('')}
+        <p class="muted">กรอกโค้ดในตะกร้าตอนยืนยันสั่งซื้อ</p>
+      </div>`
+    : '';
+}
+
+// -----------------------------------------------------
+// คำนวณยอดก่อนสั่งซื้อ
+// -----------------------------------------------------
+function calcPreview() {
+  const st = CUST.state;
+  const sub = CART.reduce((s, i) => s + i.unit * i.qty, 0);
+  const type = $('ck-type') ? $('ck-type').value : 'delivery';
+
+  let fee = type === 'delivery'
+    ? (QUOTE ? Number(QUOTE.fee) : Number(st.shop.delivery_fee || 0))
+    : 0;
+
+  let disc = 0;
+  let msg = '';
+
+  const code = (
+    $('ck-promo') ? $('ck-promo').value : ''
+  ).trim().toUpperCase();
+
+  if (code) {
+    const p = (st.promos || []).find(x => x.code === code);
+
+    if (!p) {
+      msg = 'ระบบจะตรวจสอบโค้ดนี้ตอนยืนยันสั่งซื้อ';
+    } else if (sub < Number(p.min_amount)) {
+      msg = 'โค้ดนี้ใช้เมื่อสั่งครบ ' + money(p.min_amount);
+    } else if (p.kind === 'percent') {
+      disc = Math.round(sub * Number(p.value)) / 100;
+    } else if (p.kind === 'baht') {
+      disc = Math.min(Number(p.value), sub);
+    } else if (type === 'delivery') {
+      fee = 0;
+    } else {
+      msg = 'โค้ดส่งฟรีใช้กับการจัดส่งเท่านั้น';
+    }
+  }
+
+  return {
+    sub,
+    fee,
+    disc,
+    total: sub - disc + fee,
+    msg,
+    type
+  };
+}
+
+function updateSum() {
+  const r = calcPreview();
+
+  $('ck-addr-wrap').classList.toggle(
+    'hidden',
+    r.type === 'pickup'
+  );
+
+  $('ck-map-wrap').classList.toggle(
+    'hidden',
+    r.type === 'pickup'
+  );
+
+  $('ck-sum').innerHTML = `
+    <p class="muted" style="text-align:right">
+      ค่าอาหาร ${money(r.sub)}
+      ${r.type === 'delivery'
+        ? ' | ค่าจัดส่ง ' + (r.fee ? money(r.fee) : 'ฟรี')
+        : ''}
+      ${r.disc ? ' | ส่วนลด -' + money(r.disc) : ''}
+    </p>
+
+    <p style="text-align:right">
+      <b>ยอดรวม (โดยประมาณ) ${money(r.total)}</b>
+    </p>
+
+    ${r.msg
+      ? `<p class="muted" style="text-align:right">${esc(r.msg)}</p>`
+      : ''}
+
+    <p class="muted" style="text-align:right">
+      ระบบคำนวณราคาจริงอีกครั้งตอนยืนยัน
+    </p>
+  `;
+}
+
+// -----------------------------------------------------
+// ตะกร้าสินค้า — เลือกรับเองหรือจัดส่ง
+// -----------------------------------------------------
+function renderCart() {
+  $('c-count').textContent = CART.reduce(
+    (s, i) => s + i.qty,
+    0
+  );
+
+  if (!CART.length) {
+    $('c-cart').innerHTML =
+      '<p class="muted" style="text-align:center;padding:12px">ตะกร้าว่าง</p>';
+    return;
+  }
+
+  const dOn = CUST.state.shop.delivery_enabled !== false;
+
+  $('c-cart').innerHTML =
+    CART.map((i, k) => `
+      <div class="top oc">
+        <div>
+          <b>${esc(i.name)}</b> × ${i.qty}
+          <p class="muted">
+            ${i.options.map(o => esc(o.label)).join(', ')}
+            ${i.remark ? ' | ' + esc(i.remark) : ''}
+          </p>
+        </div>
+
+        <div>
+          ${money(i.unit * i.qty)}
+          <button
+            class="sm btn-danger"
+            onclick="CART.splice(${k},1);TOKEN=null;renderCart()"
+          >ลบ</button>
+        </div>
+      </div>
+    `).join('') +
+
+    `
+      <label>รับสินค้าแบบไหน</label>
+
+      <select id="ck-type" onchange="deliveryTypeChanged()">
+        ${
+          dOn
+            ? '<option value="delivery">🛵 จัดส่งถึงที่</option>'
+            : '<option value="delivery" disabled>🛵 จัดส่ง (ร้านนี้ปิดบริการจัดส่ง)</option>'
+        }
+        <option value="pickup"${dOn ? '' : ' selected'}>
+          🏪 รับเองที่ร้าน
+        </option>
+      </select>
+
+      <div id="ck-addr-wrap">
+        <label>ที่อยู่จัดส่ง</label>
+        <input
+          id="ck-addr"
+          value="${esc(CUST.state.customer.address || '')}"
+          maxlength="300"
+          oninput="deliveryAddressChanged()"
+        >
+      </div>
+
+      <div id="ck-map-wrap">
+        <button class="btn-gray" onclick="pickDelivery()">
+          📍 ปักหมุดจุดส่ง / คำนวณค่าจัดส่ง
+        </button>
+        <p id="ck-quote" class="muted"></p>
+      </div>
+
+      <label>หมายเหตุถึงร้าน</label>
+      <input id="ck-note" maxlength="300">
+
+      <label>โค้ดโปรโมชั่น (ถ้ามี)</label>
+      <input
+        id="ck-promo"
+        maxlength="20"
+        autocapitalize="characters"
+        oninput="updateSum()"
+        placeholder="เช่น NEW10"
+      >
+
+      <div id="ck-sum" style="margin-top:8px"></div>
+
+      <button
+        id="ck-btn"
+        class="btn-success"
+        onclick="placeOrder()"
+      >✅ ยืนยันสั่งซื้อ</button>
+    `;
+
+  updateSum();
+}
+
+// -----------------------------------------------------
+// ปักหมุดและคำนวณค่าจัดส่ง
+// -----------------------------------------------------
+function pickDelivery() {
+  pickLocation({
+    title: '📍 ปักหมุดจุดส่ง',
+
+    onQuote: async (la, ln) => {
+      const q = await fetchQuote(la, ln);
+
+      return {
+        route: q.route,
+        text:
+          'ระยะทาง ' + q.distance_km +
+          ' กม. (~' + q.duration_min +
+          ' นาที) ค่าจัดส่ง ' + money(q.fee)
+      };
+    },
+
+    onConfirm: async (la, ln, addr) => {
+      try {
+        QUOTE = await fetchQuote(la, ln);
+      } catch (e) {
+        clearDeliveryQuote();
+        alert('❌ ' + e.message);
+        return false;
+      }
+
+      if (addr && !$('ck-addr').value.trim()) {
+        $('ck-addr').value = addr;
+      }
+
+      // ผูกใบคำนวณกับที่อยู่ที่ยืนยัน
+      QUOTE_ADDR = $('ck-addr').value.trim();
+
+      $('ck-quote').textContent =
+        '📍 ระยะทาง ' + QUOTE.distance_km +
+        ' กม. (~' + QUOTE.duration_min +
+        ' นาที) ค่าจัดส่ง ' + money(QUOTE.fee);
+
+      updateSum();
+      return true;
+    }
+  });
+}
+
+// -----------------------------------------------------
+// ส่งคำสั่งซื้อ
+// -----------------------------------------------------
+async function placeOrder() {
+  if (!CART.length) return;
+
+  const type = $('ck-type').value;
+  const addr = type === 'delivery'
+    ? $('ck-addr').value.trim()
+    : '';
+
+  if (type === 'delivery' && !addr) {
+    return alert('⚠️ กรอกที่อยู่จัดส่ง');
+  }
+
+  // ต้องมีใบคำนวณที่ถูกต้องและตรงกับที่อยู่
+  if (
+    type === 'delivery' &&
+    (!QUOTE || !QUOTE.quote_id || addr !== QUOTE_ADDR)
+  ) {
+    return alert(
+      '⚠️ กรุณาปักหมุดจุดส่งและคำนวณค่าจัดส่งใหม่ก่อนยืนยันสั่งซื้อ'
+    );
+  }
+
+  TOKEN = TOKEN || crypto.randomUUID();
+
+  const btn = $('ck-btn');
+  btn.disabled = true;
+
+  const items = CART.map(i => ({
+    product_id: i.product_id,
+    qty: i.qty,
+    options: i.options
+  }));
+
+  const rem = CART
+    .filter(i => i.remark)
+    .map(i => i.name + ': ' + i.remark)
+    .join('; ');
+
+  try {
+    const { data, error } = await db.rpc('place_order', {
+      ...cargs(),
+
+      p_items: items,
+
+      p_note: [
+        $('ck-note').value.trim(),
+        rem
+      ].filter(Boolean).join(' | '),
+
+      p_address: addr,
+      p_token: TOKEN,
+      p_type: type,
+      p_promo: $('ck-promo').value.trim(),
+
+      p_quote: type === 'delivery'
+        ? QUOTE.quote_id
+        : null
+    });
+
+    if (error && /quote_(required|invalid)/i.test(String(error.message))) {
+      clearDeliveryQuote();
+      updateSum();
+
+      return alert(
+        '⚠️ ใบคำนวณค่าจัดส่งหมดอายุหรือไม่ถูกต้อง กรุณาปักหมุดและคำนวณใหม่'
+      );
+    }
+
+    if (error) {
+      return alert('❌ สั่งซื้อไม่สำเร็จ: ' + errMsg(error));
+    }
+
+    if (!data) {
+      return alert('❌ เข้าสู่ระบบหมดอายุ กรุณาเข้าสู่ระบบใหม่');
+    }
+
+    CART = [];
+    TOKEN = null;
+    clearDeliveryQuote();
+
+    renderCart();
+
+    alert(
+      '✅ สั่งซื้อสำเร็จ เลขที่ ' +
+      data.order_no +
+      ' ยอด ' +
+      money(data.total) +
+      '\nโอนเงินตามบัญชีร้านแล้วแนบสลิปในหน้า "คำสั่งซื้อของฉัน"'
+    );
+
+    await refreshCustomer(true);
+    customerTab('orders');
+
+  } catch (e) {
+    alert(
+      '❌ ส่งคำสั่งซื้อไม่สำเร็จ: ' +
+      (e && e.message
+        ? e.message
+        : 'การเชื่อมต่อขัดข้อง กรุณาลองใหม่')
+    );
+
+  } finally {
+    const current = $('ck-btn');
+    if (current) current.disabled = false;
+  }
+}
+
+// -----------------------------------------------------
+// ประวัติคำสั่งซื้อของลูกค้า
+// -----------------------------------------------------
+function renderCustOrders() {
+  if (
+    [...document.querySelectorAll('#c-orders input[type=file]')]
+      .some(i => i.files.length)
+  ) {
+    return;
+  }
+
+  const s = CUST.state;
+  const b = s.shop;
+
+  $('c-bank').innerHTML = b.bank_account_number
+    ? `
+      <p>ธนาคาร: ${esc(b.bank_name)}</p>
+      <p>ชื่อบัญชี: ${esc(b.bank_account_name)}</p>
+      <p>เลขบัญชี: <b>${esc(b.bank_account_number)}</b></p>
+    `
+    : '<p class="muted">ร้านยังไม่ได้ตั้งค่าบัญชีรับเงิน กรุณาสอบถามร้าน</p>';
+
+  $('c-orders').innerHTML = s.orders.length
+    ? s.orders.map(o => `
+      <div class="card">
+        <div class="top">
+          <b>🧾 ${esc(o.order_no)}</b>
+          <div>${ob(o)}${badge(PAY, o.payment_status)}</div>
+        </div>
+
+        <p class="muted">
+          ${fdate(o.created_at)} | 📍 ${esc(o.address || '-')}
+        </p>
+
+        ${itemsHtml(o.items)}
+        ${sumHtml(o)}
+
+        ${
+          o.delivered_at && o.status !== 'completed'
+            ? '<p class="muted">🛵 คนส่งของแจ้งว่าส่งถึงแล้ว กรุณากดยืนยันรับสินค้า</p>'
+            : ''
+        }
+
+        ${
+          ['unpaid', 'rejected'].includes(o.payment_status) &&
+          o.status !== 'cancelled'
+            ? `
+              <label>
+                แนบหลักฐานการชำระเงิน
+                (รูปสลิป JPG/PNG/WebP หรือ PDF ไม่เกิน 3MB)
+              </label>
+
+              <input
+                type="file"
+                id="slip-${o.id}"
+                accept="image/jpeg,image/png,image/webp,application/pdf"
+              >
+
+              <button
+                class="btn-info"
+                onclick="submitSlip('${o.id}')"
+              >📎 ส่งหลักฐานการชำระเงิน</button>
+            `
+            : ''
+        }
+
+        ${
+          (
+            o.delivery_type === 'pickup'
+              ? o.status === 'ready'
+              : o.status === 'delivering'
+          )
+            ? `
+              <button
+                class="btn-success"
+                onclick="confirmReceipt('${o.id}')"
+              >
+                📦 ${
+                  o.delivery_type === 'pickup'
+                    ? 'รับสินค้าแล้ว'
+                    : 'ได้รับสินค้าแล้ว (จัดส่งสำเร็จ)'
+                }
+              </button>
+            `
+            : ''
+        }
+      </div>
+    `).join('')
+    : `
+      <div class="card">
+        <p class="muted" style="text-align:center">
+          ยังไม่มีคำสั่งซื้อ
+        </p>
+      </div>
+    `;
+}
+
+// -----------------------------------------------------
+// แนบหลักฐานการชำระเงิน
+// -----------------------------------------------------
+async function submitSlip(oid) {
+  const f = $('slip-' + oid).files[0];
+
+  if (!f) {
+    return alert('⚠️ เลือกไฟล์หลักฐานก่อน');
+  }
+
+  const ext = {
+    'image/jpeg': 'jpg',
+    'image/png': 'png',
+    'image/webp': 'webp',
+    'application/pdf': 'pdf'
+  }[f.type];
+
+  if (!ext) {
+    return alert('⚠️ รองรับเฉพาะ JPG/PNG/WebP/PDF');
+  }
+
+  if (f.size > 3145728) {
+    return alert('⚠️ ไฟล์ต้องไม่เกิน 3MB');
+  }
+
+  const path =
+    oid + '/' + crypto.randomUUID() + '.' + ext;
+
+  const up = await db.storage
+    .from('payment-proofs')
+    .upload(path, f, { contentType: f.type });
+
+  if (up.error) {
+    return alert('❌ อัปโหลดไม่สำเร็จ: ' + up.error.message);
+  }
+
+  const { data, error } = await db.rpc(
+    'customer_submit_payment',
+    {
+      ...cargs(),
+      p_order: oid,
+      p_path: path
+    }
+  );
+
+  if (error) {
+    return alert('❌ ' + errMsg(error));
+  }
+
+  if (!data) {
+    return alert(
+      '❌ ส่งหลักฐานไม่สำเร็จ (ออเดอร์นี้อาจชำระแล้วหรือถูกยกเลิก)'
+    );
+  }
+
+  $('slip-' + oid).value = '';
+
+  alert('✅ ส่งหลักฐานแล้ว รอร้านตรวจสอบ');
+
+  await refreshCustomer(true);
+}
+
+// -----------------------------------------------------
+// ยืนยันรับสินค้า
+// -----------------------------------------------------
+async function confirmReceipt(oid) {
+  if (!confirm('ยืนยันว่าได้รับสินค้าแล้ว?')) return;
+
+  const { data, error } = await db.rpc(
+    'customer_confirm_receipt',
+    {
+      ...cargs(),
+      p_order: oid
+    }
+  );
+
+  if (error) {
+    return alert('❌ ' + errMsg(error));
+  }
+
+  if (!data) {
+    return alert(
+      '❌ ยืนยันไม่สำเร็จ (สถานะออเดอร์ยังไม่พร้อม)'
+    );
+  }
+
+  alert('✅ ขอบคุณที่ใช้บริการ');
+
+  await refreshCustomer(true);
+}
+                               
 // =====================================================
 // 🛵 คนส่งของ
 // =====================================================

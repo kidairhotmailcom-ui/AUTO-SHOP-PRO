@@ -1197,9 +1197,7 @@ function updateSum() {
 function renderCart() {
   $('c-count').textContent = CART.reduce((s, i) => s + i.qty, 0);
   if (!CART.length) { $('c-cart').innerHTML = '<p class="muted" style="text-align:center;padding:12px">ตะกร้าว่าง</p>'; return; }
-  const dOn = CUST.state.shop.delivery_enabled === true ||
-  CUST.state.shop.delivery_enabled === 'true' ||
-  CUST.state.shop.delivery_enabled === 1;
+  const dOn = CUST.state.shop.delivery_enabled !== false;
   $('c-cart').innerHTML = CART.map((i, k) => `<div class="top oc"><div><b>${esc(i.name)}</b> × ${i.qty}<p class="muted">${i.options.map(o => esc(o.label)).join(', ')}${i.remark ? ' | ' + esc(i.remark) : ''}</p></div><div>${money(i.unit * i.qty)} <button class="sm btn-danger" onclick="CART.splice(${k},1);TOKEN=null;renderCart()">ลบ</button></div></div>`).join('') +
     `<label>รับสินค้าแบบไหน</label><select id="ck-type" onchange="updateSum()">${dOn ? '<option value="delivery">🛵 จัดส่งถึงที่</option>' : ''}<option value="pickup">🏪 รับเองที่ร้าน</option></select>
     <div id="ck-addr-wrap"><label>ที่อยู่จัดส่ง</label><input id="ck-addr" value="${esc(CUST.state.customer.address || '')}" maxlength="300"></div>

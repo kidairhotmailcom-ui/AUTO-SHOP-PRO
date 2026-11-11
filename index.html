@@ -1206,23 +1206,6 @@ function renderCart() {
     <label>หมายเหตุถึงร้าน</label><input id="ck-note" maxlength="300">
     <label>โค้ดโปรโมชั่น (ถ้ามี)</label><input id="ck-promo" maxlength="20" autocapitalize="characters" oninput="updateSum()" placeholder="เช่น NEW10">
     <div id="ck-sum" style="margin-top:8px"></div><button id="ck-btn" class="btn-success" onclick="placeOrder()">✅ ยืนยันสั่งซื้อ</button>`;
-
-  // ✅ 👇 วางโค้ดตรงนี้ครับ 👇
-  window.checkQuoteReady = function() {
-    const type = $('ck-type') ? $('ck-type').value : 'delivery';
-    const btn = $('ck-btn');
-    if (type === 'delivery' && !QUOTE) {
-      btn.disabled = true;
-      btn.style.opacity = '0.6';
-      btn.textContent = '⚠️ ปักหมุดก่อนสั่งซื้อ';
-    } else {
-      btn.disabled = false;
-      btn.style.opacity = '1';
-      btn.textContent = '✅ ยืนยันสั่งซื้อ';
-    }
-  };
-  // ✅ 👆 จบตรงนี้ครับ 👆
-
   updateSum();
 }
 async function placeOrder() {

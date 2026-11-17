@@ -1568,6 +1568,111 @@ app.use((err, req, res, next) => {
 });
 
 // ==========================================
+// JARVIS READ-ONLY BUSINESS SUMMARY
+// ==========================================
+
+const jarvisSummaryLimiter = rateLimit({
+ windowMs: 5 * 60 * 1000,
+ limit: 20,
+ standardHeaders: 'draft-7',
+ legacyHeaders: false
+});
+
+function validJarvisIntegrationToken(req) {
+ const expected = String(process.env.JARVIS_INTEGRATION_SECRET || '').trim();
+ const provided = String(req.get('x-jarvis-integration-token') || '').trim();
+ if (!expected || !provided) return false;
+ const a = Buffer.from(expected);
+ const b = Buffer.from(provided);
+ return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+async function readAllSummaryRows(table, columns, shopIds) {
+ const rows = [];
+ const shopChunks = [];
+ for (let i = 0; i < shopIds.length; i += 200) {
+   shopChunks.push(shopIds.slice(i, i + 200));
+ }
+ for (const ids of shopChunks) {
+   let offset = 0;
+   while (true) {
+     const { data, error } = await admin
+       .from(table)
+       .select(columns)
+       .in('shop_id', ids)
+       .range(offset, offset + 999);
+     if (error) throw error;
+     const batch = data || [];
+     rows.push(...batch);
+     if (batch.length < 1000) break;
+     offset += 1000;
+   }
+ }
+ return rows;
+}
+
+app.get('/api/integrations/jarvis/business-summary', jarvisSummaryLimiter, async (req, res) => {
+ res.set('Cache-Control', 'no-store');
+ if (!validJarvisIntegrationToken(req)) {
+   return res.status(401).json({ status: 'unauthorized', error: 'Integration authentication failed' });
+ }
+
+ try {
+   let shops = [];
+   let offset = 0;
+   while (true) {
+     const { data, error } = await admin
+       .from('shops')
+       .select('id,is_active,is_test')
+       .range(offset, offset + 999);
+     if (error) throw error;
+     const batch = data || [];
+     shops.push(...batch.filter(shop => shop.is_test !== true));
+     if (batch.length < 1000) break;
+     offset += 1000;
+   }
+
+   const shopIds = shops.map(shop => shop.id);
+   const [products, orders, expenses] = shopIds.length
+     ? await Promise.all([
+         readAllSummaryRows('shop_products', 'id,shop_id', shopIds),
+         readAllSummaryRows('shop_orders', 'shop_id,status,payment_status,total', shopIds),
+         readAllSummaryRows('shop_expenses', 'shop_id,amount', shopIds)
+       ])
+     : [[], [], []];
+
+   const paidCompletedOrders = orders.filter(order =>
+     order.status === 'completed' && order.payment_status === 'paid'
+   );
+   const sales = paidCompletedOrders.reduce((sum, order) => sum + Number(order.total || 0), 0);
+   const recordedExpenses = expenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
+
+   return res.json({
+     status: 'ok',
+     source: 'AUTO-SHOP-PRO',
+     scope: 'all_time_excluding_test_shops',
+     currency: 'THB',
+     generated_at: new Date().toISOString(),
+     summary: {
+       shops_total: shops.length,
+       shops_active: shops.filter(shop => shop.is_active === true).length,
+       products_total: products.length,
+       orders_total: orders.length,
+       orders_completed_paid: paidCompletedOrders.length,
+       orders_cancelled: orders.filter(order => order.status === 'cancelled').length,
+       sales_completed_paid: Number(sales.toFixed(2)),
+       expenses_recorded: Number(recordedExpenses.toFixed(2)),
+       operating_surplus_recorded: Number((sales - recordedExpenses).toFixed(2)),
+       financial_note: 'ส่วนต่างยอดขายที่ชำระแล้วของออเดอร์สำเร็จลบค่าใช้จ่ายที่บันทึกไว้ ไม่ใช่กำไรสุทธิ และยังไม่หักต้นทุนวัตถุดิบหรือค่าใช้จ่ายที่ไม่ได้บันทึก'
+     }
+   });
+ } catch (error) {
+   console.error('[JARVIS SUMMARY] Failed to build aggregate summary:', error.message);
+   return res.status(503).json({ status: 'unavailable', error: 'Business summary is temporarily unavailable' });
+ }
+});
+
+// ==========================================
 // 20. START SERVER
 // ==========================================
 

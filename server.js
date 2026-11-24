@@ -75,6 +75,19 @@ app.use((req, res, next) =>
     : mainCors(req, res, next)
 );
 
+// Attach a validated correlation ID before either API limiter can reject the
+// JARVIS business-summary request. No credential material is logged or echoed.
+app.use((req, res, next) => {
+  const requestPath = String(req.originalUrl || '').split('?')[0];
+  if (req.method === 'GET' && requestPath === '/api/integrations/jarvis/business-summary') {
+    const suppliedRequestId = String(req.get('x-jarvis-request-id') || '').trim();
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(suppliedRequestId);
+    req.jarvisRequestId = isUuid ? suppliedRequestId : crypto.randomUUID();
+    res.set('x-request-id', req.jarvisRequestId);
+  }
+  next();
+});
+
 // ==========================================
 // 3. RATE LIMIT
 // ==========================================
@@ -90,6 +103,26 @@ app.use('/api', rateLimit({
       Number(res.getHeader('RateLimit-Reset') || 900)
     );
     res.set('Retry-After', String(retryAfterSeconds));
+    const requestPath = String(req.originalUrl || '').split('?')[0];
+    if (req.method === 'GET' && requestPath === '/api/integrations/jarvis/business-summary') {
+      const requestId = req.jarvisRequestId || crypto.randomUUID();
+      res.set('x-request-id', requestId);
+      console.warn('[JARVIS_CONNECTOR_DIAGNOSTIC]', JSON.stringify({
+        request_id: requestId,
+        connector_id: 'auto_shop_pro',
+        stage: 'rate_limit',
+        diagnostic_code: 'GLOBAL_RATE_LIMITED',
+        upstream_status: 429
+      }));
+      return res.status(429).json({
+        status: 'rate_limited',
+        error: 'API_GLOBAL_RATE_LIMITED',
+        diagnostic_code: 'GLOBAL_RATE_LIMITED',
+        request_id: requestId,
+        message: 'คำขอ API โดยรวมเกินโควตาชั่วคราว',
+        retry_after_seconds: retryAfterSeconds
+      });
+    }
     return res.status(429).json({
       status: 'rate_limited',
       error: 'API_GLOBAL_RATE_LIMITED',
@@ -1592,22 +1625,36 @@ const jarvisSummaryLimiter = rateLimit({
  handler(req, res) {
   const retryAfterSeconds = Math.max(1, Number(res.getHeader('RateLimit-Reset') || 300));
   res.set('Retry-After', String(retryAfterSeconds));
+  const requestId = req.jarvisRequestId || crypto.randomUUID();
+  res.set('x-request-id', requestId);
+  console.warn('[JARVIS_CONNECTOR_DIAGNOSTIC]', JSON.stringify({
+    request_id: requestId,
+    connector_id: 'auto_shop_pro',
+    stage: 'rate_limit',
+    diagnostic_code: 'SUMMARY_RATE_LIMITED',
+    upstream_status: 429
+  }));
   return res.status(429).json({
    status: 'rate_limited',
    error: 'JARVIS_SUMMARY_RATE_LIMITED',
+   diagnostic_code: 'SUMMARY_RATE_LIMITED',
+   request_id: requestId,
    message: 'คำขอสรุปธุรกิจจาก JARVIS เกินโควตาชั่วคราว',
    retry_after_seconds: retryAfterSeconds
   });
  }
 });
 
-function validJarvisIntegrationToken(req) {
+function jarvisIntegrationTokenStatus(req) {
  const expected = String(process.env.JARVIS_INTEGRATION_SECRET || '').trim();
  const provided = String(req.get('x-jarvis-integration-token') || '').trim();
- if (!expected || !provided) return false;
+ if (!expected || !provided) return { ok: false, diagnostic_code: 'TOKEN_MISSING' };
  const a = Buffer.from(expected);
  const b = Buffer.from(provided);
- return a.length === b.length && crypto.timingSafeEqual(a, b);
+ const matches = a.length === b.length && crypto.timingSafeEqual(a, b);
+ return matches
+   ? { ok: true, diagnostic_code: null }
+   : { ok: false, diagnostic_code: 'TOKEN_MISMATCH' };
 }
 
 async function readAllSummaryRows(table, columns, shopIds) {
@@ -1635,8 +1682,23 @@ async function readAllSummaryRows(table, columns, shopIds) {
 }
 
 app.get('/api/integrations/jarvis/business-summary', (req, res, next) => {
- if (!validJarvisIntegrationToken(req)) {
-   return res.status(401).json({ status: 'unauthorized', error: 'Integration authentication failed' });
+ const auth = jarvisIntegrationTokenStatus(req);
+ if (!auth.ok) {
+   const requestId = req.jarvisRequestId || crypto.randomUUID();
+   res.set('x-request-id', requestId);
+   console.warn('[JARVIS_CONNECTOR_DIAGNOSTIC]', JSON.stringify({
+     request_id: requestId,
+     connector_id: 'auto_shop_pro',
+     stage: 'authentication',
+     diagnostic_code: auth.diagnostic_code,
+     upstream_status: 401
+   }));
+   return res.status(401).json({
+     status: 'unauthorized',
+     error: 'Integration authentication failed',
+     diagnostic_code: auth.diagnostic_code,
+     request_id: requestId
+   });
  }
  next();
 }, jarvisSummaryLimiter, async (req, res) => {
@@ -1675,6 +1737,7 @@ app.get('/api/integrations/jarvis/business-summary', (req, res, next) => {
    return res.json({
      status: 'ok',
      source: 'AUTO-SHOP-PRO',
+     request_id: req.jarvisRequestId || null,
      scope: 'all_time_excluding_test_shops',
      currency: 'THB',
      generated_at: new Date().toISOString(),
@@ -1693,7 +1756,12 @@ app.get('/api/integrations/jarvis/business-summary', (req, res, next) => {
    });
  } catch (error) {
    console.error('[JARVIS SUMMARY] Failed to build aggregate summary:', error.message);
-   return res.status(503).json({ status: 'unavailable', error: 'Business summary is temporarily unavailable' });
+   return res.status(503).json({
+     status: 'unavailable',
+     error: 'Business summary is temporarily unavailable',
+     diagnostic_code: 'SUMMARY_UNAVAILABLE',
+     request_id: req.jarvisRequestId || null
+   });
  }
 });
 

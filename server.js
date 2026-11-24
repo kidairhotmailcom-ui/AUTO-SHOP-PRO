@@ -83,7 +83,20 @@ app.use('/api', rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 120,
   standardHeaders: 'draft-7',
-  legacyHeaders: false
+  legacyHeaders: false,
+  handler(req, res) {
+    const retryAfterSeconds = Math.max(
+      1,
+      Number(res.getHeader('RateLimit-Reset') || 900)
+    );
+    res.set('Retry-After', String(retryAfterSeconds));
+    return res.status(429).json({
+      status: 'rate_limited',
+      error: 'API_GLOBAL_RATE_LIMITED',
+      message: 'คำขอ API โดยรวมเกินโควตาชั่วคราว',
+      retry_after_seconds: retryAfterSeconds
+    });
+  }
 }));
 
 const authLimiter = rateLimit({

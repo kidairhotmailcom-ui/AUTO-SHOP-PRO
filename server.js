@@ -112,6 +112,9 @@ app.use('/api', rateLimit({
         connector_id: 'auto_shop_pro',
         stage: 'rate_limit',
         diagnostic_code: 'GLOBAL_RATE_LIMITED',
+        limiter_store: 'memory_per_process',
+        key_strategy: 'express_rate_limit_default_ip',
+        trust_proxy_hops: 1,
         upstream_status: 429
       }));
       return res.status(429).json({
@@ -1632,6 +1635,9 @@ const jarvisSummaryLimiter = rateLimit({
     connector_id: 'auto_shop_pro',
     stage: 'rate_limit',
     diagnostic_code: 'SUMMARY_RATE_LIMITED',
+    limiter_store: 'memory_per_process',
+    key_strategy: 'express_rate_limit_default_ip',
+    trust_proxy_hops: 1,
     upstream_status: 429
   }));
   return res.status(429).json({
@@ -1648,7 +1654,11 @@ const jarvisSummaryLimiter = rateLimit({
 function jarvisIntegrationTokenStatus(req) {
  const expected = String(process.env.JARVIS_INTEGRATION_SECRET || '').trim();
  const provided = String(req.get('x-jarvis-integration-token') || '').trim();
- if (!expected || !provided) return { ok: false, diagnostic_code: 'TOKEN_MISSING' };
+ if (!expected || !provided) return {
+   ok: false,
+   diagnostic_code: 'TOKEN_MISSING',
+   missing_component: !expected ? 'JARVIS_INTEGRATION_SECRET' : 'x-jarvis-integration-token'
+ };
  const a = Buffer.from(expected);
  const b = Buffer.from(provided);
  const matches = a.length === b.length && crypto.timingSafeEqual(a, b);
@@ -1691,12 +1701,14 @@ app.get('/api/integrations/jarvis/business-summary', (req, res, next) => {
      connector_id: 'auto_shop_pro',
      stage: 'authentication',
      diagnostic_code: auth.diagnostic_code,
+     ...(auth.missing_component ? { missing_component: auth.missing_component } : {}),
      upstream_status: 401
    }));
    return res.status(401).json({
      status: 'unauthorized',
      error: 'Integration authentication failed',
      diagnostic_code: auth.diagnostic_code,
+     ...(auth.missing_component ? { missing_component: auth.missing_component } : {}),
      request_id: requestId
    });
  }

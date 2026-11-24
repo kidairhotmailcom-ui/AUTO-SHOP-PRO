@@ -83,7 +83,20 @@ app.use('/api', rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 120,
   standardHeaders: 'draft-7',
-  legacyHeaders: false
+  legacyHeaders: false,
+  handler(req, res) {
+    const retryAfterSeconds = Math.max(
+      1,
+      Number(res.getHeader('RateLimit-Reset') || 900)
+    );
+    res.set('Retry-After', String(retryAfterSeconds));
+    return res.status(429).json({
+      status: 'rate_limited',
+      error: 'API_GLOBAL_RATE_LIMITED',
+      message: 'คำขอ API โดยรวมเกินโควตาชั่วคราว',
+      retry_after_seconds: retryAfterSeconds
+    });
+  }
 }));
 
 const authLimiter = rateLimit({
@@ -1575,7 +1588,17 @@ const jarvisSummaryLimiter = rateLimit({
  windowMs: 5 * 60 * 1000,
  limit: 20,
  standardHeaders: 'draft-7',
- legacyHeaders: false
+ legacyHeaders: false,
+ handler(req, res) {
+  const retryAfterSeconds = Math.max(1, Number(res.getHeader('RateLimit-Reset') || 300));
+  res.set('Retry-After', String(retryAfterSeconds));
+  return res.status(429).json({
+   status: 'rate_limited',
+   error: 'JARVIS_SUMMARY_RATE_LIMITED',
+   message: 'คำขอสรุปธุรกิจจาก JARVIS เกินโควตาชั่วคราว',
+   retry_after_seconds: retryAfterSeconds
+  });
+ }
 });
 
 function validJarvisIntegrationToken(req) {
@@ -1611,11 +1634,13 @@ async function readAllSummaryRows(table, columns, shopIds) {
  return rows;
 }
 
-app.get('/api/integrations/jarvis/business-summary', jarvisSummaryLimiter, async (req, res) => {
- res.set('Cache-Control', 'no-store');
+app.get('/api/integrations/jarvis/business-summary', (req, res, next) => {
  if (!validJarvisIntegrationToken(req)) {
    return res.status(401).json({ status: 'unauthorized', error: 'Integration authentication failed' });
  }
+ next();
+}, jarvisSummaryLimiter, async (req, res) => {
+ res.set('Cache-Control', 'no-store');
 
  try {
    let shops = [];

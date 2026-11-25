@@ -1,0 +1,34 @@
+version: 2.1
+
+jobs:
+  test:
+    docker:
+      - image: cimg/node:20.19
+    working_directory: ~/project
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - npm-v1-{{ checksum "package.json" }}
+            - npm-v1-
+      - run:
+          name: Install dependencies
+          command: npm install --no-audit --no-fund
+      - save_cache:
+          key: npm-v1-{{ checksum "package.json" }}
+          paths:
+            - ~/.npm
+      - run:
+          name: Check JavaScript syntax
+          command: |
+            node --check server.js
+            node --check jarvis-summary-cache.js
+            node --check tests/jarvis-summary-cache.test.js
+      - run:
+          name: Run automated tests
+          command: npm test
+
+workflows:
+  test-on-push-and-pr:
+    jobs:
+      - test

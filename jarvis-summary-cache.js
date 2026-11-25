@@ -3,7 +3,8 @@
 const SUMMARY_PATH = '/api/integrations/jarvis/business-summary';
 
 function isTrustedJarvisSummaryRequest(req, env = process.env) {
-  if (req.path !== SUMMARY_PATH) return false;
+  const requestPath = String(req.originalUrl || req.path || '').split('?')[0];
+  if (requestPath !== SUMMARY_PATH && req.path !== SUMMARY_PATH) return false;
   const expected = String(env.JARVIS_INTEGRATION_SECRET || '').trim();
   const provided = String(
     typeof req.get === 'function'

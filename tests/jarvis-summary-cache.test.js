@@ -14,6 +14,8 @@ function response() {
 test('only the correctly authenticated JARVIS summary path bypasses global API rate limiting', () => {
   const env = { JARVIS_INTEGRATION_SECRET: 'a-secret-long-enough-for-test' };
   assert.equal(isTrustedJarvisSummaryRequest({ path: '/api/integrations/jarvis/business-summary', headers: { 'x-jarvis-integration-token': env.JARVIS_INTEGRATION_SECRET } }, env), true);
+  // Express trims the mounted '/api' prefix in req.path; originalUrl must still match.
+  assert.equal(isTrustedJarvisSummaryRequest({ path: '/integrations/jarvis/business-summary', originalUrl: '/api/integrations/jarvis/business-summary?source=test', headers: { 'x-jarvis-integration-token': env.JARVIS_INTEGRATION_SECRET } }, env), true);
   assert.equal(isTrustedJarvisSummaryRequest({ path: '/api/integrations/jarvis/business-summary', headers: {} }, env), false);
   assert.equal(isTrustedJarvisSummaryRequest({ path: '/api/owner/login', headers: { 'x-jarvis-integration-token': env.JARVIS_INTEGRATION_SECRET } }, env), false);
 });

@@ -7,6 +7,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const { isTrustedJarvisSummaryRequest, createJarvisSummaryCache } = require('./jarvis-summary-cache');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 
@@ -81,6 +82,9 @@ app.use((req, res, next) =>
 
 app.use('/api', rateLimit({
   windowMs: 15 * 60 * 1000,
+  // The authenticated JARVIS aggregate endpoint has its own limiter and cache.
+  // Do not let unrelated public API traffic or repeated trusted reads consume its global quota.
+  skip: req => isTrustedJarvisSummaryRequest(req, process.env),
   limit: 120,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
@@ -1634,13 +1638,15 @@ async function readAllSummaryRows(table, columns, shopIds) {
  return rows;
 }
 
+const jarvisSummaryCache = createJarvisSummaryCache(30_000);
+
 app.get('/api/integrations/jarvis/business-summary', (req, res, next) => {
  if (!validJarvisIntegrationToken(req)) {
    return res.status(401).json({ status: 'unauthorized', error: 'Integration authentication failed' });
  }
  next();
-}, jarvisSummaryLimiter, async (req, res) => {
- res.set('Cache-Control', 'no-store');
+}, jarvisSummaryCache, jarvisSummaryLimiter, async (req, res) => {
+ res.set('Cache-Control', 'private, max-age=30');
 
  try {
    let shops = [];

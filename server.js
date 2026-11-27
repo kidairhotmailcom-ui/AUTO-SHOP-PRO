@@ -7,7 +7,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-const { isTrustedJarvisSummaryRequest, createJarvisSummaryCache } = require('./jarvis-summary-cache');
+const { isTrustedJarvisSummaryRequest, createJarvisSummaryCache, createJarvisSummaryDiagnostics } = require('./jarvis-summary-cache');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 
@@ -80,6 +80,8 @@ app.use((req, res, next) =>
 // 3. RATE LIMIT
 // ==========================================
 
+app.use('/api/integrations/jarvis/business-summary', createJarvisSummaryDiagnostics({ env: process.env }));
+
 app.use('/api', rateLimit({
   windowMs: 15 * 60 * 1000,
   // The authenticated JARVIS aggregate endpoint has its own limiter and cache.
@@ -89,6 +91,14 @@ app.use('/api', rateLimit({
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   handler(req, res) {
+    const isJarvisSummary = String(req.originalUrl || '').split('?')[0] === '/api/integrations/jarvis/business-summary';
+    if (isJarvisSummary) {
+      res.set('X-RateLimit-Policy', 'api-global');
+      console.warn('[JARVIS SUMMARY RATE LIMIT] ' + JSON.stringify({
+        request_id: req.jarvisRequestId || null,
+        policy: 'api-global'
+      }));
+    }
     const retryAfterSeconds = Math.max(
       1,
       Number(res.getHeader('RateLimit-Reset') || 900)
@@ -98,7 +108,8 @@ app.use('/api', rateLimit({
       status: 'rate_limited',
       error: 'API_GLOBAL_RATE_LIMITED',
       message: 'คำขอ API โดยรวมเกินโควตาชั่วคราว',
-      retry_after_seconds: retryAfterSeconds
+      retry_after_seconds: retryAfterSeconds,
+      ...(isJarvisSummary ? { request_id: req.jarvisRequestId || null } : {})
     });
   }
 }));
@@ -1596,11 +1607,18 @@ const jarvisSummaryLimiter = rateLimit({
  handler(req, res) {
   const retryAfterSeconds = Math.max(1, Number(res.getHeader('RateLimit-Reset') || 300));
   res.set('Retry-After', String(retryAfterSeconds));
+  res.set('X-RateLimit-Policy', 'jarvis-summary');
+  console.warn('[JARVIS SUMMARY RATE LIMIT] ' + JSON.stringify({
+   request_id: req.jarvisRequestId || null,
+   policy: 'jarvis-summary',
+   retry_after_seconds: retryAfterSeconds
+  }));
   return res.status(429).json({
    status: 'rate_limited',
    error: 'JARVIS_SUMMARY_RATE_LIMITED',
    message: 'คำขอสรุปธุรกิจจาก JARVIS เกินโควตาชั่วคราว',
-   retry_after_seconds: retryAfterSeconds
+   retry_after_seconds: retryAfterSeconds,
+   request_id: req.jarvisRequestId || null
   });
  }
 });
